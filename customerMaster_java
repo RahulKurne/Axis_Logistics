@@ -1,0 +1,70 @@
+package com.axisbank.logistics.model;
+
+import java.io.Serializable;
+
+public class CustomerMaster implements Serializable{
+    private String customercode;
+    private String txtcreatedon;
+    private String txtlastsyncon;
+    private String customername;
+    private String txtlastmodifiedon;
+    private String custoldname;
+
+    public String getCustomercode() {
+        return customercode;
+    }
+
+    public void setCustomercode(String customercode) {
+        this.customercode = customercode;
+    }
+
+    public String getTxtcreatedon() {
+        return txtcreatedon;
+    }
+
+    public void setTxtcreatedon(String txtcreatedon) {
+        this.txtcreatedon = txtcreatedon;
+    }
+
+    public String getTxtlastsyncon() {
+        return txtlastsyncon;
+    }
+
+    public void setTxtlastsyncon(String txtlastsyncon) {
+        this.txtlastsyncon = txtlastsyncon;
+    }
+
+    public String getCustomername() {
+        return customername;
+    }
+
+    public void setCustomername(String customername) {
+        this.customername = customername;
+    }
+
+    public String getTxtlastmodifiedon() {
+        return txtlastmodifiedon;
+    }
+
+    public void setTxtlastmodifiedon(String txtlastmodifiedon) {
+        this.txtlastmodifiedon = txtlastmodifiedon;
+    }
+
+    public String getCustoldname() {
+        return custoldname;
+    }
+
+    public void setCustoldname(String custoldname) {
+        this.custoldname = custoldname;
+    }
+
+    @Override
+    public String toString() {
+        return "CustomerMaster [customercode=" + customercode + ", txtcreatedon=" + txtcreatedon + ", txtlastsyncon="
+                + txtlastsyncon + ", customername=" + customername + ", txtlastmodifiedon=" + txtlastmodifiedon
+                + ", custoldname=" + custoldname + "]";
+    }
+
+}
+
+

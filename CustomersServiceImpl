@@ -1,0 +1,33 @@
+🔴️
+	@Override
+	public String addCustomer(String user) throws ServiceException, DaoException {
+        try {
+            logger.debug("addCustomerServiceIMpl user=", user);
+            return customersDao.addCustomer(user);
+        } catch (Exception e) {
+            logger.error("Error While addCustomer Customers ServiceImpl ", e);
+            return null;
+        }
+	}
+	
+
+🔴️
+
+
+    @Override
+    public Map<String, Object> searchCustomerMaster(String customercode, String txtcreatedon,
+            String txtlastsyncon, String customername, String txtlastmodifiedon, String custoldname,
+            String loginUsername)
+            throws ServiceException, DaoException {
+        try {
+            logger.debug(String.format(
+                    "searchCustomerMaster =(customercode= %s,txtcreatedon= %s, txtlastsyncon= %s,customername= %s, txtlastmodifiedon= %s, custoldname= %s)",
+                    customercode, txtcreatedon, txtlastsyncon, customername, txtlastmodifiedon, custoldname));
+            return customersDao.searchCustomerMaster(customercode, txtcreatedon, txtlastsyncon, customername,
+                    txtlastmodifiedon, custoldname, loginUsername);
+        } catch (Exception e) {
+            logger.error("Error while searchCustomerMaster Service Impl", e);
+            return null;
+        }
+    }
+

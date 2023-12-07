@@ -1,0 +1,114 @@
+package com.axisbank.logistics.dao;
+
+import java.io.File;
+import java.util.List;
+import java.util.Map;
+
+import com.axisbank.logistics.model.CustomerChargeMaster;
+import com.axisbank.logistics.model.CustomerCode;
+import com.axisbank.logistics.model.GroupCode;
+import com.axisbank.logistics.model.ModulePermission;
+
+public interface CustomersDao {
+
+	GroupCode creategroupcode(GroupCode groupcode, String username, String audit_state) throws DaoException;
+
+	List<GroupCode> getGroupCodeList(String name) throws DaoException;
+
+	GroupCode deleteGroupCode(String groupCode) throws DaoException;
+
+	List<GroupCode> viewGroupCode(String groupCode, String user) throws DaoException;
+
+	GroupCode updateGroupCode(GroupCode gropcode, String groupCode, String username, String idValue, String audit_id, String auditState) throws DaoException;
+
+	Map<String, Object> searchGroupCode(GroupCode gropcode, String groupName, String productName, String status, String userName)  throws DaoException;
+
+	CustomerChargeMaster createChargemaster(CustomerChargeMaster charegmaster,String username, String productname, String slab, String auditstate) throws DaoException;
+
+	List<CustomerChargeMaster> getcustomerchargeList(String user)  throws DaoException;
+
+	CustomerChargeMaster deleteCustomerCharge(String productname, String slab)  throws DaoException;
+
+	List<CustomerChargeMaster> viewCustomerCharge(String productname, String slab) throws DaoException;
+
+	CustomerChargeMaster updateCustomerChargeMaster(CustomerChargeMaster customerChargeMaster, String productname, String slab, String username, String idValue, String audit_id, String isSubmit) throws DaoException;
+
+	Map<String, Object> searchCustomerCharge(CustomerChargeMaster customerChargeMaster, String productName, String status, String user) throws DaoException;
+
+	int checkgroupcode(GroupCode groupcode, String grpCode,String groupName,String productName,String customerCode) throws DaoException;
+
+	CustomerChargeMaster getcustomerChargeAuthorize(CustomerChargeMaster custChargeMaster, String srno,
+			String loginusername) throws DaoException;
+
+	List<ModulePermission> getModulepermission(String name) throws DaoException;
+
+	GroupCode getgroupChargeAuthorize(GroupCode groupCode, String srno,String loginusername) throws DaoException;
+
+	List<CustomerChargeMaster> getcustomerauthchargeList() throws DaoException;
+
+	List<GroupCode> getAuthGroupCodeList() throws DaoException;
+
+	List<GroupCode> getdistgroupnamefromgroup() throws DaoException;
+
+	File customerschargepdfnexceldata(String loginusername, String queryCustChargeForExportExcelQuery, Map<String, Object> sqlParameterMap) throws DaoException;
+
+	File customerschargepdfdata(String loginusername) throws DaoException;
+
+	File groupcodemasterexceldata(List<String> srno,String loginusername, String queryGroupForExportExcelQuery, Map<String, Object> sqlParameterMap) throws DaoException;
+
+	List<CustomerCode> viewCustCode() throws DaoException;
+
+	Map<String, Integer> saveuploadcustomerchargemaster(
+			CustomerChargeMaster customerChargeMaster, File uploadFile,
+			String loginusername, String productname) throws DaoException;
+
+	File generateexcelfileexporterrorcustomerchargedata(String loginusername) throws DaoException;
+
+	int countbatchid(CustomerChargeMaster customerChargeMaster) throws DaoException;
+
+	CustomerChargeMaster BatchidfromdtbaseCustomerchargemaster(
+			CustomerChargeMaster customerChargeMaster) throws DaoException;
+
+	void deletecustomerchargeListException() throws DaoException;
+
+	int checkvalidcustomercode(GroupCode gropcode, String customercode) throws DaoException;
+
+	boolean checkUniqueCustCode(GroupCode gropcode, String customercode) throws DaoException;
+
+	List<CustomerCode> updateviewCustCode()throws DaoException;
+
+	boolean checkUpdateUniqueCustCode(GroupCode gropcode,String groupCode , String customercode)throws DaoException;
+
+	int checkuniqueGroupname(GroupCode gropcode,String groupCode,String groupName) throws DaoException;
+
+	List<GroupCode> getdistgroupnamefromgroupauth() throws DaoException;
+
+	int checkGroupcodeAndProduct(GroupCode groupcode, String groupCode,
+			String productName) throws DaoException;
+
+	String addCustomer(String user)throws DaoException;
+
+	String auditCustomerCharge(String username, String cls, String method,
+			String audit_id, String productname, String slab, String string3,
+			String string4, String remark) throws DaoException;
+
+	boolean chkCustomerChargeAuditIdExist(String id) throws DaoException;
+
+	List<CustomerChargeMaster> searchAuthCustomerCharge(
+			CustomerChargeMaster customerChargeMaster, String productname,
+			String status, String name) throws DaoException;
+
+	List<CustomerChargeMaster> viewAuthCustomerCharge(String id, String name) throws DaoException;
+
+	boolean chkGroupCodeAuditIdExist(String id) throws DaoException;
+
+	List<GroupCode> searchAuthGroupCode(GroupCode gropcode, String groupName,
+			String productName, String status, String name) throws DaoException;
+
+	List<GroupCode> viewAuthGroupCode(String id, String username) throws DaoException;
+
+	Map<String, Object> searchCustomerMaster(String customercode, String txtcreatedon,
+            String txtlastsyncon, String customername, String txtlastmodifiedon, String custoldname, String loginUsername) throws DaoException ;
+
+}
+

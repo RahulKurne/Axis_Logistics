@@ -1,0 +1,51 @@
+
+🔴️To create/ Synchronise Button:
+	@RequestMapping(value="/customer", params="action=create", method = RequestMethod.POST) 
+	public ModelAndView addcustomer(Principal principal,HttpSession session) throws ServiceException, DaoException { 
+		logger.debug("Inside Customer Synch");
+		 if (session.getAttribute("username") == null) {
+				 ModelAndView mav=new ModelAndView("landing");
+				  mav.addObject("msg",  "Please,click on logout button and Login.!");
+				 return mav;  
+		 }
+		 String loginUserName = principal.getName(); 
+		 logger.debug("add Customer LoginUsername",loginUserName);
+		String result = customersService.addCustomer(loginUserName);
+		logger.debug("Result from controller customers",result);
+		ModelAndView mv=new ModelAndView("customerMaster");
+		
+		mv.addObject("msg", result);	
+		return mv;
+	} 
+	
+
+
+
+
+🔴️On Click Search Button:
+
+@PreAuthorize("hasPermission(#user, 'CUSTOMER_MASTER','Y')")
+@RequestMapping(value="/searchCustomerMaster",method = RequestMethod.GET)
+public ModelAndView searchCustomerMaster(@ModelAttribute("admin") @RequestParam String customercode,
+        @RequestParam String txtcreatedon, @RequestParam String txtlastsyncon, @RequestParam String customername,
+        @RequestParam String txtlastmodifiedon, @RequestParam String custoldname, Principal principal,
+        HttpSession session) throws ServiceException, DaoException {
+    logger.debug(String.format(
+            "searchCustomerMaster =(customercode= %s,txtcreatedon= %s, txtlastsyncon= %s,customername= %s, txtlastmodifiedon= %s, custoldname= %s)",
+            customercode, txtcreatedon, txtlastsyncon, customername, txtlastmodifiedon, custoldname));
+
+    if (session.getAttribute("username") == null) {
+        ModelAndView mav = new ModelAndView("landing");
+        mav.addObject("msg", "Please,click on logout button and Login.!");
+        return mav;
+    }
+    String loginUsername = principal.getName();
+    ModelAndView mv = new ModelAndView("customerMaster");
+    Map<String, Object> map = customersService.searchCustomerMaster(customercode, txtcreatedon, txtlastsyncon,
+            customername, txtlastmodifiedon, custoldname, loginUsername);
+
+    List<CustomerMaster> customerMasterlist = (List<CustomerMaster>) map.get("objectLists");
+    logger.debug("customerMasterlist in controller >>" + customerMasterlist);
+    mv.addObject("customerMasterlist", customerMasterlist);
+    return mv;
+}

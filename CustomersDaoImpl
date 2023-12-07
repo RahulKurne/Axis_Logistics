@@ -1,0 +1,104 @@
+🏀️
+import com.axisbank.logistics.model.CustomerMaster;
+import org.apache.commons.lang.StringUtils;
+
+
+
+🔴️
+   @Override
+    public String addCustomer(String user) throws DaoException {
+        logger.debug("addCustomer loginUSer()=", user);
+        try {
+            SimpleJdbcCall simpleJdbcCall = new SimpleJdbcCall(jdbcTemplate)
+                    .withProcedureName("PRC_CUST_NAME_SYNC_SP")
+                    .declareParameters(new SqlParameter("I_USER_ID", Types.VARCHAR),
+                            new SqlOutParameter("O_RESULT", OracleTypes.VARCHAR),
+                            new SqlOutParameter("O_MSG", OracleTypes.VARCHAR));
+            Map<String, Object> inParamMap = new HashMap<String, Object>();
+            inParamMap.put("I_USER_ID", user);
+
+            SqlParameterSource in = new MapSqlParameterSource(inParamMap);
+
+            String msg = "";
+
+            try {
+                logger.debug("Before Execute PRC_CUST_NAME_SYNC_SP");
+                Map<String, Object> simpleJdbcCallResult = simpleJdbcCall.execute(in);
+                logger.debug("After Execute PRC_CUST_NAME_SYNC_SP");
+                String result = (String) simpleJdbcCallResult.get("O_RESULT");
+                msg = (String) simpleJdbcCallResult.get("O_MSG");
+                logger.debug("PRC_CUST_NAME_SYNC_SP result: {result: " + result + ", msg: " + msg + "}");
+                return result;
+            } catch (Exception e) {
+                logger.error("Error while Execute PRC_CUST_NAME_SYNC_SP SP ", e);
+            }
+
+        } catch (Exception e) {
+            logger.error("error while add customer>>>", e);
+        }
+        return null;
+    }
+    
+    
+    
+    
+🔴️
+
+	@Override
+    public Map<String, Object> searchCustomerMaster(String customercode, String txtcreatedon,
+            String txtlastsyncon, String customername, String txtlastmodifiedon, String custoldname,
+            String loginUsername) throws DaoException {
+        try {
+            logger.debug(String.format(
+                    "searchCustomerMaster =(customercode= %s,txtcreatedon= %s,txtcreatedon= %s, txtlastsyncon= %s,customername= %s, txtlastmodifiedon= %s, custoldname= %s)",
+                    customercode, txtcreatedon, txtcreatedon, txtlastsyncon, customername, txtlastmodifiedon,
+                    custoldname));
+
+            final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-YYYY");
+            Map<String, Object> mapSqlParameter = new HashMap<String, Object>();
+            String query = this.sqlProperties.getProperty("searchcustomermaster");
+            if (query == null) {
+                throw new DaoException("[searchcustomermaster] value is not set in sql.properties file!");
+            }
+
+            mapSqlParameter.put("customercode", !StringUtils.isBlank(customercode) ? "%" + customercode + "%" : null);
+            mapSqlParameter.put("txtcreatedon", txtcreatedon != null ? txtcreatedon : null);
+            mapSqlParameter.put("txtlastsyncon", txtlastsyncon != null ? txtlastsyncon : null);
+            mapSqlParameter.put("txtlastmodifiedon", txtlastmodifiedon != null ? txtlastmodifiedon : null);
+            mapSqlParameter.put("customername", !StringUtils.isBlank(customername)? "%" + customername + "%" : null);
+            mapSqlParameter.put("custoldname",!StringUtils.isBlank(custoldname)? "%" + custoldname + "%" : null);
+            logger.debug("sqlQuery for customer Master search>>" + query);
+
+            List<CustomerMaster> roles = new ArrayList<CustomerMaster>();
+
+            List<Map<String, Object>> rolesList = this.namedJdbcTemplate.queryForList(query, mapSqlParameter);
+
+            for (Map<String, Object> roleMap : rolesList) {
+                CustomerMaster bean = new CustomerMaster();
+                if (roleMap.get("CUSTOMER_CODE") != null) {
+                    bean.setCustomercode("" + roleMap.get("CUSTOMER_CODE"));
+                }
+                if (roleMap.get("CREATED_ON") != null) {
+                    bean.setTxtcreatedon("" + sdf.format((java.sql.Timestamp) roleMap.get("CREATED_ON")));
+                }
+                if (roleMap.get("CUST_SYNC_DATE") != null) {
+                    bean.setTxtlastsyncon("" + sdf.format((java.sql.Timestamp) roleMap.get("CUST_SYNC_DATE")));
+                }
+                if (roleMap.get("CUSTOMER_NAME") != null) {
+                    bean.setCustomername("" + roleMap.get("CUSTOMER_NAME"));
+                }
+                if (roleMap.get("LAST_MODIFIED_ON") != null) {
+                    bean.setTxtlastmodifiedon("" + sdf.format((java.sql.Timestamp) roleMap.get("LAST_MODIFIED_ON")));
+                }
+                bean.setCustoldname("" + roleMap.get("CUSTOMER_OLD_NAME"));
+
+                roles.add(bean);
+            }
+            Map<String, Object> map = new HashMap<String, Object>();
+            map.put("objectLists", roles);
+            return map;
+        } catch (Exception e) {
+            logger.error("Error while loading search customer Master data", e);
+            throw new DaoException(e.getMessage());
+        }
+    }

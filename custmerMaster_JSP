@@ -1,0 +1,243 @@
+<%@page import="java.util.ArrayList"%>
+<%@page import="java.util.List"%>
+<%@page import="com.axisbank.logistics.model.CustomerMaster"%>
+<%@ taglib uri="http://www.springframework.org/tags/form" prefix="form"%>
+<%@page import="java.util.Enumeration"%>  
+<%@ taglib uri="http://java.sun.com/jsp/jstl/core" prefix="core"%>
+<%@taglib uri="http://displaytag.sf.net" prefix="display" %>
+<%@ page language="java" contentType="text/html; charset=ISO-8859-1" pageEncoding="ISO-8859-1"%>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta http-equiv="X-Frame-Options" content="SAMEORIGIN"/>
+<title>Axis Bank : Logistics System</title>
+<%@include file="header.jsp" %>
+<script language="javascript" type="text/javascript">
+	$(document).ready(function() {
+		$(".divgrid").jScrollPane();
+		 $('#chkallsrno').click(function(event) {  //on click
+        if(this.checked) { // check select status
+            $('.checkbox1').each(function() { //loop through each checkbox
+                this.checked = true;  //select all checkboxes with class "checkbox1"              
+            });
+        }else{
+            $('.checkbox1').each(function() { //loop through each checkbox
+                this.checked = false; //deselect all checkboxes with class "checkbox1"                      
+            });        
+        }
+    });
+	
+			$("#txtcreatedon").datepicker({
+				showOn: "button",
+				buttonImage: "${pageContext.request.contextPath}/resources/images/icon_calendar.gif",
+				buttonImageOnly: true,
+				dateFormat: 'dd-mm-yy',
+				maxDate: 0
+			});
+			$("#txtlastsyncon").datepicker({
+				showOn: "button",
+				buttonImage: "${pageContext.request.contextPath}/resources/images/icon_calendar.gif",
+				buttonImageOnly: true,
+				dateFormat: 'dd-mm-yy',
+				maxDate: 0
+			});
+			$("#txtlastmodifiedon").datepicker({
+				showOn: "button",
+				buttonImage: "${pageContext.request.contextPath}/resources/images/icon_calendar.gif",
+				buttonImageOnly: true,
+				dateFormat: 'dd-mm-yy',
+				maxDate: 0
+			});	
+		
+	});
+</script>
+<script type="text/javascript">
+function savecustomer(){
+ var valid=true;
+		$("#prcossImg").show();
+	 	$( "#dialog-messagereportprocess" ).dialog({
+			title:'Alert Dialog',
+			modal: true,
+			buttons: {
+				Ok: function() {
+				$( this ).dialog( "close" );
+				}
+			}
+		});
+		 			
+return valid;
+		
+}
+</script>
+<script type="text/javascript">
+ function checkError(){
+	 $( "#displaymsg" ).dialog({
+			title:'Alert Dialog',
+			modal: true,
+			buttons: {
+				Ok: function() {
+				$( this ).dialog( "close" );
+		
+				}
+			}
+			
+		});	
+		 //loadUrlUsingWindowLocation("./admin/deleteRoles";
+}
+ </script>
+<script type="text/javascript">
+	function searchcustomermaster() {
+		var valid = true;
+		var customercode = document.getElementById("customercode").value;
+		var txtcreatedon = document.getElementById("txtcreatedon").value;
+		var txtlastsyncon = document.getElementById("txtlastsyncon").value;
+		var customername = document.getElementById("customername").value;
+		var txtlastmodifiedon = document.getElementById("txtlastmodifiedon").value;
+		var custoldname = document.getElementById("custoldname").value;
+		if (customercode == "" && txtcreatedon == "" && txtlastsyncon == ""
+				&& customername == "" && txtlastmodifiedon == ""
+				&& custoldname == "") {
+			$("#dialog-message1").dialog({
+				title : 'Alert Dialog',
+				modal : true,
+				buttons : {
+					Ok : function() {
+						$(this).dialog("close");
+
+					}
+				}
+			});
+			valid = false;
+		}
+		return valid;
+	}
+</script>
+<script>
+	function validateAlphanumeric(inputElement) {
+		var inputValue = inputElement.value;
+		var alphanumericRegex = /^[a-zA-Z0-9_]*$/;
+
+		if (!alphanumericRegex.test(inputValue) || /[^a-zA-Z0-9_]/.test(inputValue) || /[\!@#\$%\^&\*\(\)\+\=\{\}\[\]]/.test(inputValue)) {
+			$("#dialog-message2").dialog({
+				title : 'Alert Dialog',
+				modal : true,
+				buttons : {
+					Ok : function() {
+						$(this).dialog("close");
+					}
+				}
+			});
+			valid = false;
+			inputElement.value = '';
+		}
+	}
+	
+	$(document).ready(function() {
+        $("form").bind("keypress", function(e) {
+            if (e.keyCode == 13) {
+                return false;
+            }
+        });
+    });
+</script>
+
+</head>
+
+<body onload="checkError()">
+<div class="divContent">
+<core:if test="${ msg !=null }">
+<div id="displaymsg">${msg} <br></br></div>
+</core:if>
+  <h2 class="headTitle">Customer Master</h2>
+		<div class="topBar">
+			<form:form action="./searchCustomerMaster" method="GET" id="abc"
+				modelAttribute="admin">
+				<input type="hidden" id="token" name="token"
+					value="${logisticsSecureUserOnlineToken}" />
+				<div class="divSearch FL">
+					<span class="spanLabel">Customer Code:</span><span> <input
+						type="hidden" id="getcustomercode" name="getcustomercode"
+						value="${customercode}" /> <input type="text" class="txtField"
+						name="customercode" id="customercode"
+						onblur="validateAlphanumeric(this)" />
+					</span>&nbsp;&nbsp; <span class="spanLabel">Created On:</span><span>
+						<input type="hidden" id="getcreatedon" name="getcreatedon"
+						value="${txtcreatedon}" /> <input type="text" id="txtcreatedon"
+						name="txtcreatedon" class="txtDate" readonly="readonly" />
+					</span>&nbsp;&nbsp; <span class="spanLabel">Last Sync On:</span><span>
+						<input type="hidden" id="getlastsyncon" name="getlastsyncon"
+						value="${txtlastsyncon}" /> <input type="text" id="txtlastsyncon"
+						name="txtlastsyncon" class="txtDate" readonly="readonly" />
+					</span><br /> <br /> <span class="spanLabel">Customer Name:</span><span>
+						<input type="hidden" id="getcustomername" name="getcustomername"
+						value="${customername}" /> <input type="text" class="txtField"
+						name="customername" id="customername" onblur="validateAlphanumeric(this)" />
+					</span>&nbsp;&nbsp; <span class="spanLabel">Last Modified On:</span><span>
+						<input type="hidden" id="getlastmodifiedon"
+						name="getlastmodifiedon" value="${txtlastmodifiedon}" /> <input
+						type="text" id="txtlastmodifiedon" name="txtlastmodifiedon"
+						class="txtDate" readonly="readonly" />
+					</span>&nbsp;&nbsp; <span class="spanLabel">Cust Old Name:</span><span>
+						<input type="hidden" id="getcustoldname" name="getcustoldname"
+						value="${custoldname}"/>
+						<input type="text" class="txtField" name="custoldname"
+						id="custoldname" onblur="validateAlphanumeric(this)"/> <br /> <br />
+				</div>
+				<div class="FR" style="margin-bottom: 10px;">
+					<input type="submit" class="btn" value="Search"
+						onclick="return searchcustomermaster()" />
+				</div>
+			</form:form>
+		</div>
+		<div class="topBar">
+			<form:form action="./customer?action=create" method="post"
+				modelAttribute="admin">
+				<input type="hidden" id="token" name="token"
+					value="${logisticsSecureUserOnlineToken}" />
+				<input type="submit" value="Synchronize" class="btn"
+					onclick="return savecustomer()" />
+				<br />
+				<br />
+				<label>Please click on [Synchronize] button to synchronize
+					customer master records with Profund system. This process will pull
+					newly added customers from profund system to logistics system.</label>
+			</form:form>
+		</div>
+
+  <div align="center">
+    <div class="divgrid">
+        <core:choose>
+            <core:when test="${customerMasterlist != null || not empty customerMasterlist || customerMasterlist ne 'null'}">
+                <div class="">
+                        <display:table  name="customerMasterlist" pagesize="100" export="false" sort="list" id="row" class="tablesorter" cellspacing="0" cellpadding="2" requestURI="">
+                        <display:column title="Sr. No." sortable="false" headerClass="sortable">
+                            <core:set var="srNo" value="${row_rowNum}" />
+                            <core:out value="${srNo}" />
+                        </display:column>
+                        <display:column property="customercode" title="Customer Code" sortable="false" headerClass="sortable" />
+                        <display:column property="txtcreatedon" title="Created On" sortable="false" headerClass="sortable" />
+                        <display:column property="txtlastsyncon" title="Last Sync On" sortable="false" headerClass="sortable" />
+                        <display:column property="customername" title="Customer Name" sortable="false" headerClass="sortable" />
+                        <display:column property="txtlastmodifiedon" title="Last Modification On" sortable="false" headerClass="sortable" />
+                        <display:column property="custoldname" title="Customer Old Name" sortable="false" headerClass="sortable" />
+                        <display:setProperty name="paging.banner.placement" value="top" />
+                    </display:table>
+                </div>
+            </core:when>
+            <core:otherwise>There are no records.</core:otherwise>
+        </core:choose>
+    </div>
+</div>
+ 
+</div>
+<div id="dialog-messagereportprocess" title="Download complete" style="display:none;">
+<div id="prcossImg" style="display:none;">Please Wait For Few Minute!!!<img src="/logistics/resources/images/loading-small-red.gif" width="40" height="40" /></div>
+</div>
+<div id="dialog-message_Xss" title="Download complete" style="display:none;"></div>
+<div id="dialog-message1" title="Download complete" style="display:none;">Please, Select Field For Search. </div>
+<div id="dialog-message2" title="Download complete" style="display:none;">Input must contain only alphanumeric characters.</div>
+
+
+<%@include file="footer.jsp" %></body>
+</html>

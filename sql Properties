@@ -1,0 +1,10 @@
+searchcustomermaster= SELECT cm.customer_code,cm.customer_name AS customer_name,cm.created_on,cm.last_modified_on,cm.cust_sync_date, \
+cmh.customer_name AS customer_old_name \
+FROM customer_masters_history cmh \
+RIGHT JOIN customer_masters cm \
+ON cmh.customer_code = cm.customer_code where (:customercode IS NULL OR UPPER(cm .customer_code) LIKE UPPER(:customercode) ) \
+AND (:txtcreatedon IS NULL OR TO_CHAR(cm.created_on, 'dd-MM-yyyy') = :txtcreatedon) \
+AND (:txtlastsyncon IS NULL OR TO_CHAR(cm.cust_sync_date, 'dd-MM-yyyy') = :txtlastsyncon) \
+AND (:customername IS NULL OR UPPER(cm.customer_name) LIKE UPPER(:customername) ) \
+AND (:txtlastmodifiedon IS NULL OR TO_CHAR(cm.last_modified_on, 'dd-MM-yyyy') = :txtlastmodifiedon) \
+AND (:custoldname IS NULL OR UPPER(cmh.customer_name) LIKE UPPER(:custoldname) )

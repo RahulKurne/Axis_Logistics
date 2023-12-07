@@ -1,0 +1,2783 @@
+package com.axisbank.logistics.services;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Random;
+import java.util.Vector;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
+import javax.mail.MessagingException;
+import javax.mail.internet.AddressException;
+import javax.sql.DataSource;
+
+import org.apache.poi.hssf.usermodel.HSSFCell;
+import org.apache.poi.hssf.usermodel.HSSFRow;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.PreparedStatementCreator;
+import org.springframework.jdbc.core.SqlOutParameter;
+import org.springframework.jdbc.core.SqlParameter;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import org.springframework.jdbc.core.simple.SimpleJdbcCall;
+
+import com.axisbank.logistics.configuration.MessageConfiguration;
+import com.axisbank.logistics.controller.DocUtil;
+import com.axisbank.logistics.controller.Emailer;
+import com.axisbank.logistics.dao.AdminDao;
+import com.axisbank.logistics.dao.DaoException;
+import com.axisbank.logistics.dao.ReportsDao;
+import com.axisbank.logistics.model.AddAgencyBean;
+import com.axisbank.logistics.model.EmailData;
+import com.axisbank.logistics.model.ManageCustomerPickup;
+import com.axisbank.logistics.util.Constants;
+import com.axisbank.logistics.util.CustomeExecutorService;
+import com.axisbank.logistics.util.DataParsingUtility;
+import com.axisbank.logistics.util.MessageLogger;
+import com.axisbank.logistics.util.OperationModeEnum;
+import com.axisbank.logistics.util.ParameterConfiguration;
+import com.jcraft.jsch.Channel;
+import com.jcraft.jsch.ChannelSftp;
+import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.JSchException;
+import com.jcraft.jsch.Session;
+import com.jcraft.jsch.SftpATTRS;
+import com.jcraft.jsch.SftpException;
+
+import oracle.jdbc.OracleTypes;
+
+public class Schedules {
+	private static final Logger logger = LoggerFactory.getLogger(Schedules.class);
+	Logger emailLogger = LoggerFactory.getLogger(Emailer.class);
+	final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+	
+	@Autowired
+	private DataSource dataSource;
+	
+	@Autowired
+	AdminService adminService;
+	
+	@Autowired
+    ReportsDao reportsDao;
+
+	@Autowired 
+	AdminDao adminDao;
+
+	public AdminService getAdminService() {
+		return adminService;
+	}
+	public void setAdminService(AdminService adminService) {
+		this.adminService = adminService;
+	}
+
+	public AdminDao getAdminDao() {
+		return adminDao;
+	}
+	public void setAdminDao(AdminDao adminDao) {
+		this.adminDao = adminDao;
+	}
+
+	@Autowired
+	private Emailer emailer;
+	public Emailer getEmailer() {
+		return emailer;
+	}
+	public void setEmailer(Emailer emailer) {
+		this.emailer = emailer;
+	}
+	
+	private JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	private NamedParameterJdbcTemplate namedParamJdbcTemplate;
+	private Properties sqlProperties;
+
+	public DataSource getDataSource() {
+		return dataSource;
+	}
+
+	public void setDataSource(DataSource dataSource) {
+		this.jdbcTemplate = new JdbcTemplate(dataSource);
+	}
+
+	public JdbcTemplate getJdbcTemplate() {
+		return jdbcTemplate;
+	}
+
+	public void setJdbcTemplate(JdbcTemplate jdbcTemplate) {
+		this.jdbcTemplate = jdbcTemplate;
+	}
+
+	public Properties getSqlProperties() {
+		return sqlProperties;
+	}
+
+	public void setSqlProperties(Properties sqlProperties) {
+		this.sqlProperties = sqlProperties;
+	}
+	
+	private Properties databaseProperties;
+
+	   public Properties getDatabaseProperties() {
+			return databaseProperties;
+		}
+		public void setDatabaseProperties(Properties databaseProperties) {
+			this.databaseProperties = databaseProperties;
+		}
+	 
+	 private String userId;
+
+		public String getUserId() {
+			return userId;
+		}
+		public void setUserId(String userId) {
+			this.userId = userId;
+		}
+
+		private ExecutorService executor;
+		
+		private static boolean enableEmailSendingTrigger;
+
+
+		@PostConstruct
+		public void init() throws ServiceException {
+			logger.info("Initializing Logistics Schedules");
+		
+			 this.executor = Executors.newFixedThreadPool(1);
+			 
+			 String pdfGenerator = "none";
+				
+				String pdfGeneratorvalue = (String) this.getDatabaseProperties().get("pdfGenerator");
+				
+				if (pdfGeneratorvalue != null && pdfGeneratorvalue.trim().length() > 0 && pdfGeneratorvalue.trim().equalsIgnoreCase("internal")) {
+					pdfGenerator = "internal";
+				}
+				else if (pdfGeneratorvalue != null && pdfGeneratorvalue.trim().length() > 0 && pdfGeneratorvalue.trim().equalsIgnoreCase("external")) {
+						pdfGenerator = "external";
+					}
+				 this.setPdfGenerator(pdfGenerator);
+				 logger.info("pdfEnabledValue==>"+pdfGeneratorvalue);
+				 
+				 String pdfUtilPathValue = (String) this.getDatabaseProperties().get("pdfUtilPath");
+				 this.setPdfUtilPath(pdfUtilPathValue);
+				 
+				 String uploadLogisticsDirectoryPath = (String) this.getDatabaseProperties().get("uploadLogisticsDirectoryPath");
+				 this.setUploadLogisticsDirectoryPath(uploadLogisticsDirectoryPath);
+			
+				 ParameterConfiguration.setParameters(databaseProperties);
+		try {
+			Map<String, String> queryParam = new HashMap<>();
+			queryParam.put(Constants.OPERATION_MODE, OperationModeEnum.READ_MESSAGE_KEY.getValue());
+			MessageConfiguration.setMessages(DataParsingUtility.getResult(getMessageConfigurations(null, queryParam)));
+
+			queryParam.put(Constants.OPERATION_MODE, OperationModeEnum.READ_MESSAGE_CODE.getValue());
+			MessageConfiguration
+					.setMessagesWithCode(DataParsingUtility.getResult(getMessageConfigurations(null, queryParam)));
+
+		} catch (Exception ex) {
+			MessageLogger.error(logger, "Error while setting message configs -----", ex);
+		}
+		}
+		
+	public boolean isEnableEmailSendingTrigger() {
+			return enableEmailSendingTrigger;
+	}
+
+		public void setEnableEmailSendingTrigger(boolean enableEmailSendingTrigger) {
+			this.enableEmailSendingTrigger = enableEmailSendingTrigger;
+	}
+
+	@Autowired
+	public Schedules(@Value("${enableEmailSendingTrigger}") boolean enableEmailSendingTrigger) {
+		this.enableEmailSendingTrigger = enableEmailSendingTrigger;
+	}
+
+
+	private static final AtomicBoolean shouldRunEmailTrigger = new AtomicBoolean(enableEmailSendingTrigger);
+
+	public void timelyProcessForEmailTrigger() {
+		logger.debug("timelyProcessForEmailTrigger()>>>");
+		try {
+			if (shouldRunEmailTrigger.get()) {
+				shouldRunEmailTrigger.set(false);
+				String getTodayPickups = this.sqlProperties.getProperty("getTodayPickups");
+				List<Map<String,Object>>todayPickupsList = jdbcTemplate.queryForList(getTodayPickups);
+				for (Map<String, Object> todayPickup : todayPickupsList) {
+					todayPickups(todayPickup);
+				}
+					}
+				shouldRunEmailTrigger.set(true);
+		} catch (Exception e) {
+			shouldRunEmailTrigger.set(true);
+			logger.error("Error while executiing timelyProcessForEmailTrigger : ", e);
+		}
+	}
+
+		@PreDestroy
+		public void release() throws ServiceException {
+			logger.info("Release CbaServiceImpl resources");
+			List<Runnable> undoneTasks = this.executor.shutdownNow(); // Returns list of undone tasks.
+		}
+		
+		 private String pdfGenerator ;		
+		
+	    public String getPdfGenerator() {
+			return pdfGenerator;
+		}
+		public void setPdfGenerator(String pdfGenerator) {
+			this.pdfGenerator = pdfGenerator;
+		}
+		
+		private String pdfUtilPath;
+		
+		public String getPdfUtilPath() {
+			return pdfUtilPath;
+		}
+
+
+		public void setPdfUtilPath(String pdfUtilPath) {
+			this.pdfUtilPath = pdfUtilPath;
+		}
+		
+		private String uploadLogisticsDirectoryPath;
+		private String requestRowMapper;
+		
+		
+		public String getUploadLogisticsDirectoryPath() {
+			return uploadLogisticsDirectoryPath;
+		}
+		public void setUploadLogisticsDirectoryPath(String uploadLogisticsDirectoryPath) {
+			this.uploadLogisticsDirectoryPath = uploadLogisticsDirectoryPath;
+		}
+
+	static Calendar LastInvocationTimeOfEmailProcess; 
+	public void emailProcess() {
+		if (LastInvocationTimeOfEmailProcess != null) {
+			Calendar now = Calendar.getInstance();
+			long diff = now.getTimeInMillis() - LastInvocationTimeOfEmailProcess.getTimeInMillis();
+			if (diff < 60000 ) {
+				logger.error("faulty invocation within " + diff + " ms - returning emailProcess()");
+				return;
+			}
+		}
+		
+		logger.info("emailProcess()");
+		emailLogger.info("emailProcess()");
+		
+		try {
+			emailLogger.info("this.adminService()>>>>>"+this.adminService);
+			this.adminService.retiggerFailEmail();
+		} catch (Exception e) {
+			logger.error("Error while retriggering failed Emails via scheduler. ", e);
+			emailLogger.error("Error while retriggering failed Emails via scheduler. ", e);
+		}
+	}
+	
+	static Calendar LastInvocationTimeOfDailyProcess; 
+	public void dailyProcess() throws SQLException, DaoException {
+		if (LastInvocationTimeOfDailyProcess != null) {
+			Calendar now = Calendar.getInstance();
+			long diff = now.getTimeInMillis() - LastInvocationTimeOfDailyProcess.getTimeInMillis();
+			if (diff < 60000 ) {
+				logger.error("faulty invocation within " + diff + " ms - returning dailyProcess()");
+				return;
+			}
+		}
+	
+		this.emailProcess();
+		
+		final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+		logger.info("Start dailyProcess() scheduler ");
+		
+		this.eodTrigger();
+		try {
+			logger.debug("updateUserStatusForInactivity");
+			updateUserStatusForInactivity();
+			
+		} catch (ServiceException e) {
+			logger.error("Error running daily process! ", e);
+		}
+		
+		/*emailLogger.info("Start process of pull data from db link profund into logistics system dailyProcess() scheduler ");
+		try {			
+			List<Map<String, Object>> dbLinkprofundDetails = null;
+			String getDBProfundData = this.sqlProperties.getProperty("getDBProfundData");
+			if(getDBProfundData == null){
+				throw new DaoException("value for getDBProfundData not set in sql.properties");
+			}
+			
+			emailLogger.info("start executing query");
+			
+			dbLinkprofundDetails = this.jdbcTemplate.queryForList(getDBProfundData,new Object[]{});
+			
+			emailLogger.info("end executing query; "+dbLinkprofundDetails);
+		
+		} catch (Exception e) {
+			e.printStackTrace();
+			emailLogger.error("Error running daily process! ", e);
+		}
+		emailLogger.info("End process of pull data from db link profund into logistics system dailyProcess() scheduler ");
+		*/
+		emailLogger.info("#### End dailyProcess() scheduler ########");
+		logger.info("End dailyProcess() scheduler ");
+		
+		}
+	private List<Map<String, Object>> validateManageCustomerPickup( String pickupCode, String customerCode, String date, String product, String branch_code) {
+		// TODO Auto-generated method stub
+		List<Map<String, Object>> entrydatedetails = null;	
+		String entrydate=null;
+		SimpleDateFormat sdf=new SimpleDateFormat("dd-MM-yyyy");
+		try{			
+			String getProfundData = this.sqlProperties.getProperty("getProfundEntrydate");
+			if(getProfundData == null){
+				throw new DaoException("value for getProfundEntrydate not set in sql.properties");
+			}
+			//logger.info("date="+date);
+			//logger.info("customerCode="+customerCode);
+			//logger.info("pickupCode="+pickupCode);
+			///logger.info("product="+product);
+			//logger.info("branch_code="+branch_code);
+			
+			logger.info("start executing query");
+			
+			entrydatedetails = this.jdbcTemplate.queryForList(getProfundData,new Object[]{date,customerCode,pickupCode,product});
+			
+			logger.info("end executing query; "+entrydatedetails);
+			
+			/*for (Map<String, Object> listValue : entrydatedetails) {
+				
+				if(listValue.get("entry_date")!=null)
+				{
+				 entrydate=""+sdf.format((java.sql.Timestamp)listValue.get("entry_date"));
+				}
+			}*/
+			
+		}catch(Exception e){
+			logger.error(e.getLocalizedMessage());
+		   logger.error("error>>>"+e);
+		}
+		return entrydatedetails;
+	}
+	/*@SuppressWarnings("deprecation")
+	public int validateManageCustomerPickup(String agencyCode, String pickupCode, String customerCode, String amount, String slipNo) throws DaoException{
+		logger.info("inside validateManageCustomerPickup validation");
+		int countForValidateRecord = 0;		
+		try{			
+			String getProfundData = this.sqlProperties.getProperty("getProfundData");
+			if(getProfundData == null){
+				throw new DaoException("value for getProfundData not set in sql.properties");
+			}
+			countForValidateRecord = this.jdbcTemplate.queryForInt(getProfundData,new Object[]{pickupCode,customerCode,amount,slipNo});
+			
+		}catch(DaoException e){
+			
+		}
+		return countForValidateRecord;
+	}
+	*/
+	
+	
+	public void dayEndDeactivationMail(final String srno,final String loginusername,final String deactivationDate) throws DaoException
+	{
+		MessageLogger.info(logger,"dayEndDeactivationMail"+srno);
+		final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+		 DocUtil docUtil=new DocUtil(this.getPdfGenerator(),this.getPdfUtilPath());
+		 logger.info("srno="+srno);
+		  try {
+			    String getAgencyCode=this.sqlProperties.getProperty("getagencycodefrommanagecutomerpickupforforcepkupdiscontinuation");
+				logger.info("getAgencyCode="+getAgencyCode);
+			    if(getAgencyCode == null){
+				throw new DaoException("[getagencycodefrommanagecutomerpickupforforcepkupdiscontinuation] value is not set in sql.properties file!");
+			   } 
+				logger.info("inside try block");
+				jdbcTemplate = new JdbcTemplate(dataSource);
+				List<ManageCustomerPickup> roles = new ArrayList<ManageCustomerPickup>();
+				 List<EmailData> schedulerJobData = new ArrayList<EmailData>();
+				 String reactive=null;
+				List<Map<String, Object>> rolesList = this.jdbcTemplate.queryForList(getAgencyCode,srno);
+				MessageLogger.info(logger, "rolelist siuze===>"+rolesList.size());
+				for (Map<String, Object> roleMap : rolesList) {
+					ManageCustomerPickup bean = new ManageCustomerPickup();
+					    bean.setAgencycode(""+roleMap.get("AGENCY_CODE")); 
+					    if(roleMap.get("CLIENT_LOCAL_EMAIL_ID")!=null){
+					    	bean.setEmailid(""+roleMap.get("CLIENT_LOCAL_EMAIL_ID"));
+					    }
+					    bean.setCustomercode(""+roleMap.get("CUSTOMER_CODE"));
+					    bean.setPickupcode(""+roleMap.get("PICKUP_CODE"));
+					    String producttmp=""+roleMap.get("product");
+					    if(roleMap.get("CLIENT_HO_EMAILIDS")!=null){
+					    	bean.setClientHOemailids(""+roleMap.get("CLIENT_HO_EMAILIDS"));
+					    }   
+					    if(roleMap.get("reactive")!=null)
+					    {
+					    bean.setReactive(""+roleMap.get("reactive"));
+					    }
+					    else
+					    {
+					    	 bean.setReactive("");
+					    }
+						if (roleMap.get("MCP_BRANCH_CODE") != null) {
+							bean.setSolid("" + roleMap.get("MCP_BRANCH_CODE"));
+						} else {
+							bean.setSolid("");
+						}
+						if (roleMap.get("PICKUP_TYPE") != null) {
+							bean.setDdlPickupType("" + roleMap.get("PICKUP_TYPE"));
+						} else {
+							bean.setDdlPickupType("");
+						}
+						if (roleMap.get("SL_NO") != null) {
+							bean.setSrno("" + roleMap.get("SL_NO"));
+						} else {
+							bean.setSrno("");
+						}
+						if (roleMap.get("CASH_LIMIT") != null) {
+							bean.setCashlimit("" + roleMap.get("CASH_LIMIT"));
+						} else {
+							bean.setCashlimit("");
+						}
+						if (roleMap.get("PICKUP_ADDRESS_1") != null) {
+							bean.setPickupadd1("" + roleMap.get("PICKUP_ADDRESS_1"));
+						} else {
+							bean.setPickupadd1("");
+						}
+						if (roleMap.get("PICKUP_ADDRESS_2") != null) {
+							bean.setPickupadd2("" + roleMap.get("PICKUP_ADDRESS_2"));
+						} else {
+							bean.setPickupadd2("");
+						}
+						if (roleMap.get("PICKUP_ADDRESS_3") != null) {
+							bean.setPickupadd3("" + roleMap.get("PICKUP_ADDRESS_3"));
+						} else {
+							bean.setPickupadd3("");
+						}
+						if (roleMap.get("PICKUP_ADDRESS_4") != null) {
+							bean.setPickupadd4("" + roleMap.get("PICKUP_ADDRESS_4"));
+						} else {
+							bean.setPickupadd4("");
+						}
+						if (roleMap.get("REACTIVATION_DATE") != null) {
+							bean.setTxtReactiveDate(""+sdf.format((java.sql.Timestamp) roleMap.get("REACTIVATION_DATE")));
+						} else {
+							bean.setTxtReactiveDate("");
+						}
+					    logger.info("deactivation_date=>>>"+roleMap.get("DEACTIVATION_DATE"));
+					    roles.add(bean);
+					    logger.info("Agency Code sending email in cash customer pickup="+bean.getAgencycode());
+					    String agencycode=bean.getAgencycode();
+					    String clientemailId="";
+					    //String clientHOEmailIds="";
+					    if(bean.getEmailid()!=null){
+					    	clientemailId=bean.getEmailid();
+					    }else{
+					    	clientemailId="";
+					    }
+					   /* if(bean.getClientHOemailids()!=null){
+					    	clientHOEmailIds=bean.getClientHOemailids();
+					    }else{
+					    	clientHOEmailIds="";
+					    }*/
+					    final String custcode=bean.getCustomercode();
+					    final String pickupcode=bean.getPickupcode();					 
+					    reactive=bean.getReactive();
+					    logger.info("clientemailId"+clientemailId);
+
+					    //roles=(List<ManageCustomerPickup>) roleMap;
+					    logger.info("Agency Code sending email in cash customer pickup="+bean.getAgencycode());
+					  
+					    String getmaileventcount=this.sqlProperties.getProperty("getmailEventcountdeactive");
+						if(getmaileventcount == null){
+						throw new DaoException("[getmailEventcountdeactive] value is not set in sql.properties file!");
+					   } 
+					    int count=0;
+					    
+					 
+						
+						List<Map<String, Object>> emailListmail = this.jdbcTemplate.queryForList(getmaileventcount,custcode,pickupcode,custcode,producttmp);
+						for (Map<String, Object> emailMapmail : emailListmail) {
+							   count=Integer.parseInt(emailMapmail.get("mail").toString());
+						}
+					    MessageLogger.info(logger, "day end deact count ==>"+count);
+						if(count==0)
+						{
+					//start code for get agency email address from agency master//  
+					    //final SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy");
+					    List<AddAgencyBean> email = new ArrayList<AddAgencyBean>();
+					    String getAgencyemail=this.sqlProperties.getProperty("getagencyemailfromagencymaster");
+						if(getAgencyemail == null){
+						throw new DaoException("[getagencyemailfromagencymaster] value is not set in sql.properties file!");
+					   }
+						
+						jdbcTemplate = new JdbcTemplate(dataSource);
+						//List<AddAgencyBean> email = new ArrayList<AddAgencyBean>();
+						StringBuilder agencyemail=new StringBuilder("");
+						List<Map<String, Object>> emailList = this.jdbcTemplate.queryForList(getAgencyemail,agencycode);
+						for (Map<String, Object> emailMap : emailList) {
+							    AddAgencyBean emailadd = new AddAgencyBean();
+							    if(emailMap.get("EMAIL_1")!=null)
+							    	agencyemail.append(""+emailMap.get("EMAIL_1"));
+							    emailadd.setEmail1(""+emailMap.get("EMAIL_1")); 
+							    if(emailMap.get("EMAIL_2")!=null)
+							    	agencyemail.append(","+emailMap.get("EMAIL_2"));
+							    if(emailMap.get("EMAIL_3")!=null)
+							    	agencyemail.append(","+emailMap.get("EMAIL_3"));
+							    if(emailMap.get("EMAIL_4")!=null)
+							    	agencyemail.append(","+emailMap.get("EMAIL_4"));
+							    if(emailMap.get("EMAIL_5")!=null)
+							    	agencyemail.append(","+emailMap.get("EMAIL_5"));
+							    
+							    	//agencyEmail. emailadd.setEmail1(""+emailMap.get("EMAIL_2")); 
+							    email.add(emailadd);
+							    //agencyemail=emailadd.getEmail1();
+							    logger.info("Agency email="+agencyemail.toString());
+						}
+						String agencyMulEmail[]=agencyemail.toString().split(",");
+
+
+						
+						//get local tbc
+						 String gettbc=this.sqlProperties.getProperty("getlocaltbcmailmcp");
+							if(gettbc == null){
+							throw new DaoException("[getlocaltbcmailmcp] value is not set in sql.properties file!");
+						   }
+							
+							//jdbcTemplate = new JdbcTemplate(dataSource);
+							
+							String localtbcmail="";
+							List<Map<String, Object>> emailList1 = this.jdbcTemplate.queryForList(gettbc,srno);
+							for (Map<String, Object> emailMap1 : emailList1) {
+								    AddAgencyBean emailadd = new AddAgencyBean();
+								    if(emailMap1.get("TBC_BRANCH_HEAD_IDS")!=null)
+								    	emailadd.setEmail1(""+emailMap1.get("TBC_BRANCH_HEAD_IDS")); 
+								    else
+								    emailadd.setEmail1("");
+								    logger.info("localtbc email="+emailMap1.get("TBC_BRANCH_HEAD_IDS"));
+								    email.add(emailadd);
+								    if(emailadd.getEmail1()!=null){
+								    	localtbcmail=emailadd.getEmail1();
+								    }else{
+								    	localtbcmail="";
+								    }
+								    
+								   // logger.info("localtbc email="+localtbcmail);
+							}
+							 logger.info("localtbc email="+localtbcmail);
+							 
+							//get nodal tbc
+							 String getnodaltbc=this.sqlProperties.getProperty("getnodaltbcmailmcp");
+								if(getnodaltbc == null){
+								throw new DaoException("[getnodaltbcmailmcp] value is not set in sql.properties file!");
+							   }
+								
+								jdbcTemplate = new JdbcTemplate(dataSource);
+								
+								String nodaltbcmail="";
+								List<Map<String, Object>> emailListnodal = this.jdbcTemplate.queryForList(getnodaltbc,srno);
+								for (Map<String, Object> emailMap2 : emailListnodal) {
+									    AddAgencyBean emailadd = new AddAgencyBean();
+									    if(emailMap2.get("TBC_BRANCH_HEAD_IDS")!=null)
+									    	emailadd.setEmail1(""+emailMap2.get("TBC_BRANCH_HEAD_IDS")); 
+									    else
+									    emailadd.setEmail1("");
+									    email.add(emailadd);
+									    if(emailadd.getEmail1()!=null){
+									    	nodaltbcmail=emailadd.getEmail1();
+									    }else{
+									    	nodaltbcmail="";
+									    }
+									    
+									    //logger.info("nodaltbc email="+nodaltbcmail);
+								}
+								logger.info("nodaltbc email="+nodaltbcmail);
+								//get branch id
+								 String getbarnch=this.sqlProperties.getProperty("getbranchmailidmcp");
+								if(getbarnch == null){
+								throw new DaoException("[getbranchmailidmcp] value is not set in sql.properties file!");
+							   }
+								
+								jdbcTemplate = new JdbcTemplate(dataSource);
+								//logger.info("serialpickupcode[i]="+serialpickupcode[i]);
+								String getbarnchid="";
+								List<Map<String, Object>> emailListbranch = this.jdbcTemplate.queryForList(getbarnch,srno);
+								for (Map<String, Object> emailMap3 : emailListbranch) {
+									    AddAgencyBean emailadd = new AddAgencyBean();
+									    if(emailMap3.get("branch_email_address")!=null)
+									    	emailadd.setEmail1(""+emailMap3.get("branch_email_address")); 
+									    else
+									    emailadd.setEmail1("");
+									    email.add(emailadd);
+									    if(emailadd.getEmail1()!=null){
+									    	 getbarnchid=emailadd.getEmail1();
+									    }else {
+									    	 getbarnchid="";
+									    }
+									   
+									   // logger.info("branch email="+getbarnchid);
+								}
+								logger.info("branch email="+getbarnchid);
+								
+						// logger.info("Agency email="+emailadd.getEmail1());
+							
+						String product="";
+					
+						if(roleMap.get("PRODUCT").toString().equalsIgnoreCase("CASH") || roleMap.get("PRODUCT").toString().equalsIgnoreCase("Cash Delivery") || roleMap.get("PRODUCT").toString().equalsIgnoreCase("Cash Burial"))
+							product="Cash";
+						else
+							product="Cheque";
+						
+						logger.info("Product"+product);
+
+						String deactivation_date=deactivationDate;
+						
+						//if(roleMap.get("DEACTIVATION_DATE")!=null)				
+							
+						//else
+						//	deactivation_date="";
+						
+						logger.info("deactivation_date"+deactivation_date);
+						/*String rm_email_id="";
+						if(roleMap.get("RM_EMAIL_ID")!=null)		
+							rm_email_id=(String) roleMap.get("RM_EMAIL_ID");
+						else
+							rm_email_id="";*/
+						
+						String location_name="";
+						
+						if(roleMap.get("LOCATION_NAME")!=null)		
+							location_name=(String) roleMap.get("LOCATION_NAME");
+						else
+							location_name="-";
+						
+					//	String subject="Letter of Deactivation of "+product+" Pickup from  "+ location_name+ " for "+roleMap.get("CUSTOMER_CODE")+ " w.e.f. "+deactivation_date;
+
+						String subject="Deactivation of Pickup service at "+ location_name+" of "+roleMap.get("CUSTOMER_CODE")+" For "+roleMap.get("PICKUP_CODE") +" w.e.f. "+deactivation_date;
+
+						String body="Dear Sir/Madam,\n\nEnclosed herewith the Letter of Deactivation for pickup at  "+roleMap.get("LOCATION_NAME")+"  with pick up code as  " +roleMap.get("PICKUP_CODE") +"  for the client code  "+roleMap.get("CUSTOMER_CODE")+"  w.e.f  "+deactivation_date+"\n\nEnsure make necessary changes in your data and intimate your local co-ordinator deactivate the pickup.\n\nThanks & Regards,\n\nCMS Logistics Team \nAxis Bank Ltd.\nContact : 022- 7131 5888 to 5891.";	
+
+						
+						String getfilename=this.sqlProperties.getProperty("getfilenamedetailsdeactive");
+						if(getfilename == null){
+						throw new DaoException("[getfilenamedetailsdeactive] value is not set in sql.properties file!");
+						
+						
+					   }
+						
+						jdbcTemplate = new JdbcTemplate(dataSource);
+						List<ManageCustomerPickup> roleFile = new ArrayList<ManageCustomerPickup>();
+						String path="";
+						List<Map<String, Object>> filerole = this.jdbcTemplate.queryForList(getfilename);
+						for (Map<String, Object> roleMapfile : filerole) {
+							if(roleMapfile.get("FILE_PATH")!=null)
+							path=(String) roleMapfile.get("FILE_PATH"); 
+							else
+								path="";
+						   
+						}
+						Map<String, Object> attachmentData = new HashMap<String, Object>();
+						
+						attachmentData.put("rolesList", rolesList);
+						attachmentData.put("path", path);
+						attachmentData.put("deactivation_date", deactivation_date);
+						attachmentData.put("mcp_sl_no", srno);
+						logger.info("Path="+path);
+						/*File file=new File("");
+						file=docUtil.getLetterOFIntentDetails(rolesList,path,deactivation_date);
+						*/
+						String cmsEmailId = this.databaseProperties.getProperty("cmsEmailId");
+						logger.info("cmsEmailId="+cmsEmailId);
+						
+						String cc=localtbcmail+","+nodaltbcmail+","+getbarnchid+","+cmsEmailId;
+						
+						
+						String userId = this.databaseProperties.getProperty("userId");
+						logger.info("userId==="+userId);
+						
+						//this.sendMailWithAttachment(userId,new String[] {agencyemail},subject,body,file,cc);
+						//this.sendMailWithAttachment(userId,new String[] {clientHOEmailIds},subject,body,file,cc);
+						schedulerJobData.add(new EmailData("deactivation", userId, agencyMulEmail, cc, subject, body, attachmentData));
+
+	
+			//end
+						
+						
+//save mail event
+						
+						try {
+		                	
+							MessageLogger.info(logger,"inside a try block to insert data.........into mal event");
+			            			final String saveemailevent = this.sqlProperties.getProperty("saveemaileventForPickpDiscon");
+			                        logger.info("inside a try block to insert data");
+			                        logger.info("saveemailevent"+saveemailevent);
+			            			if(saveemailevent == null){
+			            				throw new DaoException("[saveemaileventForPickpDiscon] value is not set in sql.properties!");
+			                        }
+			            		
+						final String agencycode_event = (String) roleMap.get("AGENCY_CODE");
+						final String tmp_reactive = reactive;
+						final String prod = (String) roleMap.get("product");
+						final String branchCode = bean.getSolid();
+						final String pickupType = bean.getDdlPickupType();
+						final String cashLimit = bean.getCashlimit();
+						final String pickupAdd1 = bean.getPickupadd1();
+						final String pickupAdd2 = bean.getPickupadd2();
+						final String pickupAdd3 = bean.getPickupadd3();
+						final String pickupAdd4 = bean.getPickupadd4();
+						final String reactivationDate = bean.getTxtReactiveDate();
+										
+						MessageLogger.info(logger,"agencycode event="+agencycode_event);
+						MessageLogger.info(logger,"tmp_reactive="+tmp_reactive);
+						MessageLogger.info(logger,"prod="+prod);
+						MessageLogger.info(logger,"branchCode="+branchCode);
+						MessageLogger.info(logger,"pickupType="+pickupType);
+						MessageLogger.info(logger,"cashLimit="+cashLimit);
+						MessageLogger.info(logger,"pickupAdd1="+pickupAdd1);
+						MessageLogger.info(logger,"pickupAdd2="+pickupAdd2);
+						MessageLogger.info(logger,"pickupAdd3="+pickupAdd3);
+						MessageLogger.info(logger,"pickupAdd4="+pickupAdd4);
+						MessageLogger.info(logger,"reactivationDate="+reactivationDate);
+			            			this.jdbcTemplate.update(new PreparedStatementCreator() {
+			            				@Override
+			            				public PreparedStatement createPreparedStatement(Connection con) throws SQLException {
+			            					PreparedStatement preparedStatement = con.prepareStatement(saveemailevent);
+			            				    preparedStatement.setString(1,"Deactivation_Letter");
+			            				    preparedStatement.setString(2,"Customer");
+			            				    preparedStatement.setString(3,agencycode_event);
+			            				    preparedStatement.setString(4,loginusername);	
+			            				    preparedStatement.setString(5,custcode);
+			            				    preparedStatement.setString(6,pickupcode);
+			            				    preparedStatement.setString(7,tmp_reactive);
+			            				    preparedStatement.setString(8,prod);
+			            				    preparedStatement.setString(9,srno);
+			            				    preparedStatement.setString(10,"complete");
+			            				    preparedStatement.setString(11,"finished");
+											preparedStatement.setString(12, branchCode);
+											preparedStatement.setString(13, pickupType);
+											preparedStatement.setString(14, cashLimit);
+											preparedStatement.setString(15, pickupAdd1);
+											preparedStatement.setString(16, pickupAdd2);
+											preparedStatement.setString(17, pickupAdd3);
+											preparedStatement.setString(18, pickupAdd4);
+											preparedStatement.setString(19, reactivationDate);
+			                                return preparedStatement;
+			            				}
+			                        });
+			            			
+			            			MessageLogger.info(logger, "Record Inserted Successfully");
+	                        
+	            			//return state;
+	            		}catch(Exception e){
+	            			MessageLogger.error(logger, "Inside catch inserted block Discontinuation sending mail"+e);
+	            		}
+						
+						 
+						//end
+				}
+				}
+				
+				this.executor.execute(this.getAuthorizationEmailNotificationTask(schedulerJobData));
+
+				
+			} catch(Exception e){
+				logger.error("Error while loading group code data", e);
+				MessageLogger.error(logger, "Inside catch inserted block Discontinuation sending mail1"+e);
+					throw new DaoException(e.getLocalizedMessage());
+			}
+	}
+	
+	
+	public Runnable getAuthorizationEmailNotificationTask(List<EmailData> emailDataList) throws Exception {
+		logger.info(String.format("getAuthorizationEmailNotificationTask(%s)", emailDataList));
+		
+		Runnable runnable = new Runnable() {
+			List<EmailData> emailDataList;
+			//AdminDaoImpl adminDao;
+			Schedules schedules;
+			DocUtil docUtil;
+			//DocUtil docUtil=new DocUtil(this.adminDao.isPdfEnabled());
+			public Runnable init(List<EmailData> emailDataList, Schedules schedules) {
+				emailLogger.info("inside init()===>>");
+				this.emailDataList = emailDataList;
+				//this.adminDao = adminDao;
+				this.schedules = schedules;
+				this.docUtil=new DocUtil(this.schedules.getPdfGenerator(),this.schedules.getPdfUtilPath());
+				return this;
+			}
+			
+			@Override
+			public void run() {
+				logger.info("Started Authorization Email Notification Task in scheduler");
+				emailLogger.info("Started Authorization Email Notification Task in scheduler");
+				
+				
+				for(EmailData ed: this.emailDataList) {
+					emailLogger.info("inside EmailData>>>>>>");
+					Map map = ed.getAttachmentData();
+					try {
+						logger.info("ED.GETTYPE=="+ed.getType().equals("deactivation"));
+						 if (ed.getType().equals("deactivation")) {
+							String updatePickupDicont = "update mail_events  set job_status=? , process_status=? where sl_no=? and event='Deactivation_Letter' ";
+
+							File file=new File("");
+							file=docUtil.getLetterOFIntentDetails((List<Map<String, Object>>)map.get("rolesList"),(String)map.get("path"),(String)map.get("deactivation_date"));
+							
+							try{
+								emailer.sendMailWithAttachment(ed.getFromEmailId(),ed.getToEmailIds(),ed.getSubject(),ed.getBody(),file,ed.getCcEmailIds());
+								int a = jdbcTemplate.update(updatePickupDicont,new Object[]{"complete","finished",ed.getAttachmentData().get("mcp_sl_no")});								
+								emailLogger.info("###### Email Send successfully For deactivation SL_No >> "+ed.getAttachmentData().get("mcp_sl_no"));
+								
+							} catch(Exception e){
+								int a = jdbcTemplate.update(updatePickupDicont,new Object[]{"failed","finished",ed.getAttachmentData().get("mcp_sl_no")});
+								logger.error("This is updatPickupDicont mail event catch=="+a+". SL number"+ed.getAttachmentData().get("mcp_sl_no") + e);
+								emailLogger.error("Error in Sending Deactivation Letter >>>> " +ed.getAttachmentData().get("mcp_sl_no")+" error>>"+e);
+							}	
+							
+							
+						} else if (ed.getType().equals("dayendagency")) {
+							emailLogger.info("inside dayendagency email block>>>>>>");
+							
+
+							File file=new File("");
+							//file=docUtil.getLetterOFIntentDetails((List<Map<String, Object>>)map.get("rolesList"),(String)map.get("path"),(String)map.get("deactivation_date"));
+							file=getExcelFile((List<Map<String, Object>>)map.get("rolesList"));
+							emailLogger.info("####### send email for deactivation >> " + ed.getFromEmailId());
+							try{
+								emailer.sendMailWithAttachment(ed.getFromEmailId(),ed.getToEmailIds(),ed.getSubject(),ed.getBody(),file,ed.getCcEmailIds());
+								emailLogger.info("dayend mail send successfully>>>>>>");
+
+							} catch(Exception e) {
+								emailLogger.error("###### Error in dayend sending mail"+e); 
+							}
+				
+						}
+						else if (ed.getType().equals("dayendtbc")) {
+							
+
+							File file=new File("");
+							//file=docUtil.getLetterOFIntentDetails((List<Map<String, Object>>)map.get("rolesList"),(String)map.get("path"),(String)map.get("deactivation_date"));
+							
+							file=getExcelFile((List<Map<String, Object>>)map.get("rolesList"));
+							try{
+								emailer.sendMailWithAttachment(ed.getFromEmailId(),ed.getToEmailIds(),ed.getSubject(),ed.getBody(),file,ed.getCcEmailIds());								emailLogger.info("dayend mail send successfully>>>>>>");
+								emailLogger.info("dayendtbc mail send successfully>>>>>>");
+
+							}catch(Exception e){
+								emailLogger.error("###### Error in dayendtbc sending mail"+e); 
+							}
+						} else if (ed.getType().equals("Successful_Pickup")) {
+
+
+							File fileForPendingPickups = reportsDao
+									.getSuccessfulPickupDetailsForCustomer((String) ed.getAttachmentData().get("customerCode"));
+							if (fileForPendingPickups != null) {
+								System.out.println("file "+fileForPendingPickups);
+							String updatePendingPickups = "update mail_events  set job_status= ? , process_status= ? where mail_sent_date= sysdate and event = 'Successful_Pickup' and CUSTOMER_CODE = ?";
+								try {
+									emailer.sendMailWithAttachment(ed.getFromEmailId(), ed.getToEmailIds(),
+											ed.getSubject(), ed.getBody(), fileForPendingPickups, ed.getCcEmailIds());
+									emailLogger.info("Successful Pickup mail send successfully>>>>>>");
+								} catch (Exception ex) {
+									jdbcTemplate.update(updatePendingPickups, new Object[] { "failed", "finished",
+											ed.getAttachmentData().get("customerCode") });
+									emailLogger.error("Error in Successful Pickup sending mail to customer" + ex);
+									ex.printStackTrace();
+								}
+							}
+
+							/*String updateSuccessfulPickups = "update mail_events  set job_status= ? , process_status= ? where mail_sent_date= sysdate and event = 'Successful_Pickup' and CUSTOMER_CODE = ? and PRODUCT = ?, PICKUP_CODE = ? , SL_NO = ?";
+
+							try {
+								emailer.sendMail(ed.getFromEmailId(), ed.getToEmailIds(), ed.getSubject(),
+										ed.getBody());				
+							} catch (Exception ex) {
+								jdbcTemplate.update(updateSuccessfulPickups,
+										new Object[] { "fail", "finished", ed.getAttachmentData().get("customerCode"), ed.getAttachmentData().get("product"), ed.getAttachmentData().get("pickupCode"), ed.getAttachmentData().get("sl_no")});
+								emailLogger.info("todaySuccessfulPickups mail send successfully>>>>>>");
+								emailLogger.info("Error in todaySuccessfulPickups sending mail" + ex);
+								ex.printStackTrace();
+							}*/
+						} else if (ed.getType().equals("Pending_Pickup")) {
+							File fileForPendingPickups = reportsDao
+									.getPendingPickupDetails((String) ed.getAttachmentData().get("agencyCode"));
+							if (fileForPendingPickups != null) {
+							String updatePendingPickups = "update mail_events  set job_status= ? , process_status= ? where mail_sent_date= sysdate and event = 'Pending_Pickup' and AGENCY_CODE = ?";
+							try {
+								emailer.sendMailWithAttachment(ed.getFromEmailId(), ed.getToEmailIds(),
+											ed.getSubject(), ed.getBody(), fileForPendingPickups, ed.getCcEmailIds());
+									emailLogger.info("Pending_Pickup mail send successfully>>>>>>");
+							} catch (Exception ex) {
+									jdbcTemplate.update(updatePendingPickups, new Object[] { "failed", "finished",
+											ed.getAttachmentData().get("agencyCode") });
+								emailLogger.error("Error in Pending_Pickup sending mail" + ex);
+								ex.printStackTrace();
+								}
+							}
+						}else if (ed.getType().equals("Alert_Pending_Pickup")) {
+
+							String updateAlertPendingPickups = "update mail_events  set job_status= ? , process_status= ? where mail_sent_date= sysdate and event = 'Alert_Pending_Pickup' and CUSTOMER_CODE = ? and PRODUCT = ?, PICKUP_CODE = ? , SL_NO = ?";
+
+							try {
+								emailer.sendMail(ed.getFromEmailId(), ed.getToEmailIds(), ed.getSubject(),
+										ed.getBody());				
+							} catch (Exception ex) {
+								jdbcTemplate.update(updateAlertPendingPickups,
+										new Object[] { "failed", "finished", ed.getAttachmentData().get("customerCode"), ed.getAttachmentData().get("product"), ed.getAttachmentData().get("pickupCode"), ed.getAttachmentData().get("sl_no")});
+								emailLogger.error("Alert_Pending_Pickup mail send successfully>>>>>>");
+								emailLogger.error("Error in Alert_Pending_Pickup sending mail" + ex);
+								ex.printStackTrace();
+							}
+						} else if ((Constants.DAY_END_REPORT).equals(ed.getType())) {
+                            String updateMailEventForDayEndReport = sqlProperties.getProperty("updateMailEventForDayEndReport");
+
+                            try {
+                                emailer.sendMail(ed.getFromEmailId(), ed.getToEmailIds(), ed.getSubject(),
+                                        ed.getBody());              
+                            } catch (Exception ex) {
+                                jdbcTemplate.update(updateMailEventForDayEndReport,
+                                        new Object[] {Constants.FAIL, Constants.FINISHED});
+                                emailLogger.error("Error in day end reports sending mail" + ex.getLocalizedMessage());
+                                ex.printStackTrace();
+                            }
+                        } else if ((Constants.MONTH_END_REPORT).equals(ed.getType())) {
+                            String updateMailEventForDayEndReport = sqlProperties.getProperty("updateMailEventForMonthEndReport");
+
+                            try {
+                                emailer.sendMail(ed.getFromEmailId(), ed.getToEmailIds(), ed.getSubject(),
+                                        ed.getBody());              
+                            } catch (Exception ex) {
+                                jdbcTemplate.update(updateMailEventForDayEndReport,
+                                        new Object[] {Constants.FAIL, Constants.FINISHED});
+                                emailLogger.error("Error in day end reports sending mail" + ex.getLocalizedMessage());
+                                ex.printStackTrace();
+                            }
+                        }
+					} catch (Exception ex) {
+						logger.error("Error while caching parameters. " + ex.getLocalizedMessage(), ex);
+					}
+				}
+				
+				logger.info("Finished Authorization Email Notification Task");
+			}
+		}.init(emailDataList, this);
+		
+		return runnable;
+	}
+
+	
+	/*public void sendMailWithAttachment(String from, String[] to, String subject, String msg,File file,String cc)
+			throws DaoException {
+		//logger.info(String.format("sendEmail(%s, %s, %s)", from, to, subject));
+		this.emailer.sendMailWithAttachment(from, to, subject, msg,file,cc);
+		try {
+			//this.executor.execute(emailer.getEmailTask(from, to, subject, msg));
+		} catch (Exception e) {
+			logger.error("Error while sending email to=" + to, e);
+			//throw new ServiceException(e.getLocalizedMessage());
+		}
+		
+	}
+	*/
+
+	public void sendMailWithMultiAttachment(String from, String[] to, String subject, String msg,File attachfile,File attachfile1,String cc)
+			throws DaoException,AddressException, MessagingException,IOException {
+		//logger.info(String.format("sendEmail(%s, %s, %s)", from, to, subject));
+		try {
+			this.emailer.sendMailWithMultiAttachment(from, to, subject, msg,attachfile,attachfile1,cc);
+			//this.executor.execute(emailer.getEmailTask(from, to, subject, msg));
+		} catch (Exception e) {
+			logger.error("Error while sending email to=" + to, e);
+			//throw new ServiceException(e.getLocalizedMessage());
+		}
+		
+	}
+	
+	public void dayendAgency(final String agency_code) throws DaoException
+	{
+		emailLogger.info(String.format("dayendAgency(agency_code=%s)", agency_code));
+		
+		final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+		 DocUtil docUtil=new DocUtil(this.getPdfGenerator(),this.getPdfUtilPath());
+		
+		  try {
+			  
+			  emailLogger.info("Inside try dayend>>>>>>> ");
+			  List<EmailData> schedulerJobData = new ArrayList<EmailData>();
+			
+			    String getListOfLOI=this.sqlProperties.getProperty("getListofLOI");
+				logger.info("getListofLOI="+getListOfLOI);
+			    if(getListOfLOI == null){
+				throw new DaoException("[getListofLOI] value is not set in sql.properties file!");
+			   } 
+				logger.info("inside try block");
+				jdbcTemplate = new JdbcTemplate(dataSource);
+				String custCode="";
+				String pkupCode="";
+				String product="";
+				String sl_no="";
+				List<Map<String, Object>> rolesList = this.jdbcTemplate.queryForList(getListOfLOI,agency_code);
+			
+				
+				  int count=0;
+					
+                  int flag=0;
+				for (Map<String, Object> roleMapfile : rolesList) {
+					
+					
+					 
+					custCode=(String)roleMapfile.get("CUSTOMER_CODE");
+					pkupCode=(String)roleMapfile.get("PICKUP_CODE");
+					product=(String)roleMapfile.get("product");
+					sl_no=(String)roleMapfile.get("sl_no");
+					logger.info("custcode="+custCode);
+					logger.info("pickupcode="+pkupCode);
+					logger.info("sl_no="+sl_no);
+				
+				   String getmaileventcount=this.sqlProperties.getProperty("getcountMaileventdayend");
+					if(getmaileventcount == null){
+					throw new DaoException("[getcountMaileventdayend] value is not set in sql.properties file!");
+				   } 
+				   
+				    
+				 
+					
+					List<Map<String, Object>> emailListmail = this.jdbcTemplate.queryForList(getmaileventcount,agency_code,custCode,pkupCode,product);
+					for (Map<String, Object> emailMapmail : emailListmail) {
+						   count=Integer.parseInt(emailMapmail.get("mail").toString());
+					}
+				    
+					if(count==0)
+					{
+						//getcountlist.add(roleMapfile);
+						flag=1;
+						
+					}
+					emailLogger.info("count="+count);
+				}
+					
+				
+				if(flag==1){
+				
+					emailLogger.info("flag=1>>>>>>");
+					
+				//to get agency emailid
+					    List<AddAgencyBean> email = new ArrayList<AddAgencyBean>();
+					    String getAgencyemail=this.sqlProperties.getProperty("getagencyemailfromagencymaster");
+						if(getAgencyemail == null){
+						throw new DaoException("[getagencyemailfromagencymaster] value is not set in sql.properties file!");
+					   }
+						
+						jdbcTemplate = new JdbcTemplate(dataSource);
+						//List<AddAgencyBean> email = new ArrayList<AddAgencyBean>();
+						//List<AddAgencyBean> email = new ArrayList<AddAgencyBean>();
+						StringBuilder agencyemail=new StringBuilder("");
+						List<Map<String, Object>> emailList = this.jdbcTemplate.queryForList(getAgencyemail,agency_code);
+						for (Map<String, Object> emailMap : emailList) {
+							    AddAgencyBean emailadd = new AddAgencyBean();
+							    if(emailMap.get("EMAIL_1")!=null)
+							    	agencyemail.append(""+emailMap.get("EMAIL_1"));
+							    emailadd.setEmail1(""+emailMap.get("EMAIL_1")); 
+							    if(emailMap.get("EMAIL_2")!=null)
+							    	agencyemail.append(","+emailMap.get("EMAIL_2"));
+							    if(emailMap.get("EMAIL_3")!=null)
+							    	agencyemail.append(","+emailMap.get("EMAIL_3"));
+							    if(emailMap.get("EMAIL_4")!=null)
+							    	agencyemail.append(","+emailMap.get("EMAIL_4"));
+							    if(emailMap.get("EMAIL_5")!=null)
+							    	agencyemail.append(","+emailMap.get("EMAIL_5"));
+							    
+							    	//agencyEmail. emailadd.setEmail1(""+emailMap.get("EMAIL_2")); 
+							    email.add(emailadd);
+							    //agencyemail=emailadd.getEmail1();
+							    logger.info("Agency email="+agencyemail.toString());
+						}
+						String agencyMulEmail[]=agencyemail.toString().split(",");
+
+						
+					    Date d=new Date();
+						
+						String subject="Consolidated List of Pick Points allotted to your Agency for the Date "+sdf.format(d);
+                        
+						String body="Dear Sir/ Madam,\n\nKindly refer the attached file containing list of new pickup points allotted to your agency today. If said LOI's are not received at your end, kindly let us know immediately. \n\nKindly arrange to conduct the dry run before start-up date and submit us the dry run report in attached dry run format.\n\nPlease also inform us the first pickup details on the startup date with following details.\n\n   1.Deposit Number.\n   2.Amount\n   3.If Nil Amount reason for Nil Pick up.\n\nKindly arrange to reply the mail with proper details immediately.\n\nThanks & Regards,\nCMS Logistics team\n\nAxis Bank\nCMS Logistics.\nContact: 71315888 to 5893.\n";
+
+						
+						String getfilename=this.sqlProperties.getProperty("getdayendagencypath");
+						if(getfilename == null){
+						throw new DaoException("[getdayendagencypath] value is not set in sql.properties file!");
+						
+						
+					   }
+						
+						jdbcTemplate = new JdbcTemplate(dataSource);
+						List<ManageCustomerPickup> roleFile = new ArrayList<ManageCustomerPickup>();
+						String path="";
+						List<Map<String, Object>> filerole = this.jdbcTemplate.queryForList(getfilename);
+						for (Map<String, Object> roleMapfile : filerole) {
+							if(roleMapfile.get("FILE_PATH")!=null)
+							path=(String) roleMapfile.get("FILE_PATH"); 
+							else
+								path="";
+						   
+						}
+						
+						List<Map<String, Object>> role = null;
+						
+						
+						/*logger.info("Path="+path);
+						File file=new File("");
+						String deactivation_date="";
+						file=docUtil.getLetterOFIntentDetails(role,path,deactivation_date);*/
+						
+						/*File fileExcel=new File("");
+						fileExcel=getExcelFile(rolesList);
+						*/
+						emailLogger.info("dayendAgency path>>>>>>> "+path);
+						Map<String, Object> attachmentData = new HashMap<String, Object>();
+						
+						attachmentData.put("rolesList", rolesList);
+						
+						
+						
+						String cmsEmailId = this.databaseProperties.getProperty("cmsEmailId");
+						emailLogger.info("cmsEmailId="+cmsEmailId);
+						
+					    String cc=cmsEmailId;
+					    emailLogger.info("cc="+cc);
+						
+						String userId = this.databaseProperties.getProperty("userId");
+						emailLogger.info("userId==="+userId);
+						emailLogger.info("agencyMulEmail==="+agencyMulEmail);
+						
+						//this.sendMailWithMultiAttachment(userId,new String[] {agencyemail},subject,body,file,fileExcel,cc);
+					//	this.sendMailWithAttachment(userId,new String[] {agencyemail},subject,body,fileExcel,cc);
+						
+						schedulerJobData.add(new EmailData("dayendagency", userId, agencyMulEmail, cc, subject, body, attachmentData));
+
+
+						//saving records into mail event
+						List<Map<String, Object>> rolesListsave = this.jdbcTemplate.queryForList(getListOfLOI,agency_code);
+						for (Map<String, Object> emailMaplist : rolesListsave) {	
+							emailLogger.info("inside save data===>>");
+							custCode =(String)emailMaplist.get("CUSTOMER_CODE");
+							pkupCode =(String)emailMaplist.get("PICKUP_CODE");
+					
+							int countsave=0;
+						
+						 String getmaileventcountagency=this.sqlProperties.getProperty("getcountMaileventdayend");
+							if(getmaileventcountagency == null){
+							throw new DaoException("[getcountMaileventdayend] value is not set in sql.properties file!");
+						   } 
+						    
+						    
+						 
+							
+							List<Map<String, Object>> emailListmail1 = this.jdbcTemplate.queryForList(getmaileventcountagency,agency_code,custCode,pkupCode,product);
+							for (Map<String, Object> emailMapmail1 : emailListmail1) {
+								   countsave=Integer.parseInt(emailMapmail1.get("mail").toString());
+							}
+						    
+							if(countsave==0)
+							{
+								emailLogger.info("inside countsave===>>"+countsave);
+	           //save record into mail event
+
+						try {
+		                	
+	            			System.out.println("inside a try block to insert data.........");
+	            			final String saveemailevent = this.sqlProperties.getProperty("saveemaileventdayend");
+				            			emailLogger.info("inside a try block to insert data into mail event");
+				                       
+				            			if(saveemailevent == null){
+				            				throw new DaoException("[saveemaileventdayend] value is not set in sql.properties!");
+				                        }
+				            		
+				            		
+				 			           
+				            			final String custcode=custCode;
+				            			final String pickupcode=pkupCode;
+				            			final String prod=product;
+				            			final String srno=sl_no;
+				            			this.jdbcTemplate.update(new PreparedStatementCreator() {
+				            				@Override
+				            				public PreparedStatement createPreparedStatement(Connection con) throws SQLException {
+				            					PreparedStatement preparedStatement = con.prepareStatement(saveemailevent);
+				            				    preparedStatement.setString(1,"DayEndMailToAgency");
+				            				    preparedStatement.setString(2,"Agency");
+				            				    preparedStatement.setString(3,agency_code);
+				            				    preparedStatement.setString(4,"");	
+				            				    preparedStatement.setString(5,custcode);
+				            				    preparedStatement.setString(6,pickupcode);
+				            				    preparedStatement.setString(7,null);
+				            				    preparedStatement.setString(8,prod);
+				            				    preparedStatement.setString(9,srno);
+				                                return preparedStatement;
+				            				}
+				                        });
+				            			
+									
+			                    
+			        			//return state;
+				        		}catch(Exception e){
+				        			logger.error("Inside catch inserted block");
+				        			
+				        		}
+							}
+						}
+			
+				}
+				
+				this.executor.execute(this.getAuthorizationEmailNotificationTask(schedulerJobData));
+				
+			} catch(Exception e){
+				logger.error("Error while loading group code data", e);
+					throw new DaoException(e.getLocalizedMessage());
+			}
+	}
+	
+	
+
+	public void dayendTbc(final String agency_code) throws DaoException
+	{
+		emailLogger.info("inside dayendAgency()  ");
+		
+		final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+		 DocUtil docUtil=new DocUtil(this.getPdfGenerator(),this.getPdfUtilPath());
+		
+		  try {
+			  
+					
+			  // List<Map<String, Object>> getcountlist=null;
+				
+			  List<EmailData> schedulerJobData = new ArrayList<EmailData>();
+			  
+			  String getListofLOITbcemailid=this.sqlProperties.getProperty("getListofLOITbcemailid");
+				logger.info("getListofLOITbcemailid="+getListofLOITbcemailid);
+			    if(getListofLOITbcemailid == null){
+				throw new DaoException("[getListofLOITbcemailid] value is not set in sql.properties file!");
+			   } 
+	 
+			    List<Map<String, Object>> getListtbc = this.jdbcTemplate.queryForList(getListofLOITbcemailid,agency_code);
+			    //for (Map<String, Object> emailMaplist : getListtbc) {
+			    	/*custCode =(String)emailMaplist.get("CUSTOMER_CODE");
+			    	pkupCode =(String)emailMaplist.get("PICKUP_CODE");*/
+			    //}
+				
+					
+						for (Map<String, Object> emailMap : getListtbc) {
+							
+							String local_tbc="";
+							String local_tbcemailId="";
+							
+							if(emailMap.get("local_tbc")!=null)
+							{
+						            local_tbc=(String)emailMap.get("local_tbc");
+						            
+							}
+							if(emailMap.get("tbc_branch_head_ids")!=null)
+							{
+								local_tbcemailId=(String)emailMap.get("tbc_branch_head_ids");
+						            
+							}
+						           
+							
+								   String getListOfLOI=this.sqlProperties.getProperty("getListofLOItbc");
+									logger.info("getListofLOItbc="+getListOfLOI);
+								    if(getListOfLOI == null){
+									throw new DaoException("[getListofLOItbc] value is not set in sql.properties file!");
+								   } 
+									logger.info("inside try block");
+									jdbcTemplate = new JdbcTemplate(dataSource);
+									
+									List<Map<String, Object>> rolesList = this.jdbcTemplate.queryForList(getListOfLOI,agency_code,local_tbc);
+									
+									Date d=new Date();
+									//String subject="Day End Mailer to TBC";
+									String subject="Consolidated List of Pick Points created on "+sdf.format(d) +" pertains to TBC "+local_tbc;
+									
+								//	String body="Dear Sir/ Madam,\n\nWe have forwarded you the copy of LOI's sent to the Vendor's for Cash / Cheque pickup's for the pickup points coming under your Location.\n\nList of LOI's sent today has been attached herewith for your reference.\n\nKindly co-ordinate with the Clients & Vendor locally to ensure that the dry run is conducted on time and the pickups are started on the date of activation. Closely monitor the pickups for the initial few days and inform the Client's / Vendor to get in touch with you in case there are any issues related to pickups. \n\nIn case the Vendor is not adhering to the process / timelines of pickups then you may escalate the same to Logistics team at CCPH.\n\nFurther on receipt of the confirmation from Agency/Local TBC with regard to start-up of the pick-up, we mark pick-up codes as �Y� (Pick-up started) in the logistics.  \n\nPlease check with the agency and local client and confirm the pickup status with the collection amount & deposit slip no (Any recent deposit slips details) and confirm the same on BOD immediate next day of activation. Please note that, the given confirmation should be complete and accurate. On the basis of your confirmation, we will update the pickup status and accordingly client will be charge for the respective pickup codes.\n\nNote: If there is a NIL collections for more than 20 days, mention remarks for NIL collection and arrange to provide the following details.\n\n    1.Nil acknowledgement copy from the agency. \n    2.Deactivation request from the client if the Pick-up not required.\n\nKindly arrange to reply the mail with proper details immediately.\n\nThanks & Regards,\nCMS Logistics team\n\nAxis Bank\nCMS Logistics.\nContact: 71315888 to 5893.\n";
+			
+									String body="Dear Sir/ Madam,\n\nEnclosed herewith the List of Pick up Points created today pertains to your TBC Location.\n\nThe copy of LOI's sent to the Vendor's for Cash / Cheque pickups for the pickup points coming under your Location has been marked to you.\n\nKindly co-ordinate with the Clients & Vendor locally to ensure that the dry run is conducted on time and the pickups are started on the date of activation. Further closely monitor the pickups for initial few days and inform the Client's / Vendor to get in touch with you in case there are any issues related to pickups\n\nIn case the Vendor is not adhering to the process / timelines of pickups then you may escalate the same to Logistics team at CCPH.\n\nPlease also inform us the first pickup details within 3 days from startup date with following details.\n\n   1. Deposit Number\n   2. Amount\n   3. If Nil Amount reason for Nil Pick up. \n\nKindly arrange to reply the mail with proper details immediately. \n\nThanks & Regards,\nCMS Logistics team\n\nAxis Bank\nCMS Logistics.\nContact: 71315888 to 5893.\n";
+
+									
+									String getfilename=this.sqlProperties.getProperty("getdayendtbcpath");
+									if(getfilename == null){
+									throw new DaoException("[getdayendtbcpath] value is not set in sql.properties file!");
+									
+									
+								   }
+									
+								
+									 String custcode1="";
+									  String pickupcode1="";
+									  String product="";
+									  String sl_no="";
+									  int count=0;
+									
+                                       int flag=0;
+									for (Map<String, Object> roleMapfile : rolesList) {
+									
+										custcode1=(String)roleMapfile.get("CUSTOMER_CODE");
+										pickupcode1=(String)roleMapfile.get("PICKUP_CODE");
+										product=(String)roleMapfile.get("product");
+										sl_no=(String)roleMapfile.get("sl_no");
+										
+										logger.info("custcode="+custcode1);
+										logger.info("pickupcode="+pickupcode1);
+										logger.info("sl_no="+sl_no);
+										
+									
+									
+									
+									 String getmaileventcount=this.sqlProperties.getProperty("getcountMaileventdayendtbc");
+										if(getmaileventcount == null){
+										throw new DaoException("[getcountMaileventdayendtbc] value is not set in sql.properties file!");
+									   } 
+									   
+									    
+									 
+										
+										List<Map<String, Object>> emailListmail = this.jdbcTemplate.queryForList(getmaileventcount,agency_code,custcode1,pickupcode1,product);
+										for (Map<String, Object> emailMapmail : emailListmail) {
+											   count=Integer.parseInt(emailMapmail.get("mail").toString());
+										}
+									    
+										if(count==0)
+										{
+											//getcountlist.add(roleMapfile);
+											flag=1;
+											
+										}
+										logger.info("count="+count);
+									}
+										
+									/*if(count==0)
+									{
+										*/
+									
+									if(flag==1)
+									{
+										
+									jdbcTemplate = new JdbcTemplate(dataSource);
+									List<ManageCustomerPickup> roleFile = new ArrayList<ManageCustomerPickup>();
+									String path="";
+									List<Map<String, Object>> filerole = this.jdbcTemplate.queryForList(getfilename);
+									for (Map<String, Object> roleMapfile1 : filerole) {
+										if(roleMapfile1.get("FILE_PATH")!=null)
+										path=(String) roleMapfile1.get("FILE_PATH"); 
+										else
+											path="";
+									   
+									}
+									
+									List<Map<String, Object>> role = null;
+									
+									
+									logger.info("Path="+path);
+									/*File file=new File("");
+									String deactivation_date="";
+									file=docUtil.getLetterOFIntentDetails(role,path,deactivation_date);*/
+									
+								/*	File fileExcel=new File("");
+									fileExcel=getExcelFiletbc(rolesList);*/
+									
+									Map<String, Object> attachmentData = new HashMap<String, Object>();
+									
+									attachmentData.put("rolesList", rolesList);
+									
+									String cmsEmailId = this.databaseProperties.getProperty("cmsEmailId");
+									logger.info("cmsEmailId="+cmsEmailId);
+									
+								    String cc=cmsEmailId;
+									
+									
+									String userId = this.databaseProperties.getProperty("userId");
+									logger.info("userId==="+userId);
+									
+								//	this.sendMailWithMultiAttachment(userId,new String[] {local_tbcemailId},subject,body,file,fileExcel,cc);
+					
+									schedulerJobData.add(new EmailData("dayendtbc", userId, new String[] {local_tbcemailId}, cc, subject, body, attachmentData));
+									
+							    	//this.sendMailWithAttachment(userId,new String[] {local_tbcemailId},subject,body,fileExcel,cc);
+
+									
+								//saving record into mail event	
+									
+									for (Map<String, Object> roleMapfile : rolesList) {
+									
+										
+										final String custcode=(String)roleMapfile.get("customer_code");
+				            			final String pickupcode=(String)roleMapfile.get("pickup_Code");
+				            			
+
+										 String getmaileventcountforsave=this.sqlProperties.getProperty("getcountMaileventdayendtbc");
+											if(getmaileventcountforsave == null){
+											throw new DaoException("[getcountMaileventdayendtbc] value is not set in sql.properties file!");
+										   } 
+										    int countsave=0;
+										    
+										 
+											
+											List<Map<String, Object>> emailListmailcount = this.jdbcTemplate.queryForList(getmaileventcountforsave,agency_code,custcode,pickupcode,product);
+											for (Map<String, Object> emailMapmail : emailListmailcount) {
+												countsave=Integer.parseInt(emailMapmail.get("mail").toString());
+											}
+										    
+											logger.info("count="+count);
+											
+										if(countsave==0)
+										{
+									
+									 //save record into mail event
+
+									try {
+					                	
+				            			System.out.println("inside a try block to insert data.........");
+				            			final String saveemailevent = this.sqlProperties.getProperty("saveemaileventdayend");
+				                        logger.info("inside a try block to insert data");
+				                        logger.info("saveemailevent"+saveemailevent);
+				            			if(saveemailevent == null){
+				            				throw new DaoException("[saveemaileventdayend] value is not set in sql.properties!");
+				                        }
+				            		
+				            		
+				 			           final String prod=product;
+				 			          final String srno=sl_no;
+				            			
+				            			this.jdbcTemplate.update(new PreparedStatementCreator() {
+				            				@Override
+				            				public PreparedStatement createPreparedStatement(Connection con) throws SQLException {
+				            					PreparedStatement preparedStatement = con.prepareStatement(saveemailevent);
+				            				    preparedStatement.setString(1,"DayEndMailToTBC");
+				            				    preparedStatement.setString(2,"TBC");
+				            				    preparedStatement.setString(3,agency_code);
+				            				    preparedStatement.setString(4,"");	
+				            				    preparedStatement.setString(5,custcode);
+				            				    preparedStatement.setString(6,pickupcode);
+				            				    preparedStatement.setString(7,null);
+				            				    preparedStatement.setString(8,prod);
+				            				    preparedStatement.setString(9,srno);
+				                                return preparedStatement;
+				            				}
+				                        });
+				            			
+				            			
+									
+			                    
+			        			//return state;
+			        		}catch(Exception e){
+			        			logger.error("Inside catch inserted block");
+			        		
+			        		}
+									
+									}
+									}
+									
+									//}
+									}
+				          
+						//}
+						
+									
+		  }
+						this.executor.execute(this.getAuthorizationEmailNotificationTask(schedulerJobData));
+			} catch(Exception e){
+				
+				logger.error("Error while loading group code data", e);
+					throw new DaoException(e.getLocalizedMessage());
+			}
+	}
+	
+	
+	public File getExcelFile(List<Map<String, Object>> rolesList)
+	{
+		emailLogger.info("getExcelFile()"+rolesList.size());
+		String fileName="";
+		FileOutputStream fos=null;
+		HSSFWorkbook workbook = new HSSFWorkbook();
+ 		HSSFSheet worksheet = workbook.createSheet("Agency Error Details");
+		
+ 		int rowIndex = 0; // set row index;
+		int colIndex = 0; // set column index;
+		HSSFRow headerRow = worksheet.createRow(rowIndex++);
+		
+		List<ManageCustomerPickup>  mcpList = new ArrayList<ManageCustomerPickup>();
+		 
+		final SimpleDateFormat simpleDateFormat = new SimpleDateFormat("dd-MM-yyyy");
+	
+		for (Map<String, Object> roleMap : rolesList) {
+			
+			ManageCustomerPickup bean = new ManageCustomerPickup();
+			   
+			  
+			   if(roleMap.get("recipient_code")!= null ) {
+				   bean.setAgencycode(""+roleMap.get("recipient_code")); 	
+				 }
+			   
+			   if(roleMap.get("sl_no")!= null ) {
+				   bean.setSrno(""+roleMap.get("sl_no")); 	
+				 }
+			
+			
+			   if(roleMap.get("Customer_code")!= null ) {
+				   bean.setCustomercode(""+roleMap.get("Customer_code"));
+				 }
+			
+			   if(roleMap.get("pickup_code")!= null ) {
+				   bean.setPickupcode(""+roleMap.get("pickup_code"));
+				 }
+			    
+			   if(roleMap.get("customer_name")!= null ) {
+				   bean.setCustomername(""+roleMap.get("customer_name"));
+				 }
+			    
+			   if(roleMap.get("group_code")!= null ) {
+				   bean.setGroupcode(""+roleMap.get("group_code"));
+				 }
+			   
+			   
+			   if(roleMap.get("branch_code")!= null ) {
+				   bean.setSolid(""+roleMap.get("branch_code"));
+				 }
+			   
+			   if(roleMap.get("agency_code")!= null ) {
+				   bean.setAgencycode(""+roleMap.get("agency_code"));
+				 }
+			   
+			   
+			   
+			   if(roleMap.get("location_code")!= null ) {
+				   bean.setLocationcode(""+roleMap.get("location_code"));
+				 }
+			   
+			   if(roleMap.get("location_name")!= null ) {
+				   bean.setLocationname(""+roleMap.get("location_name"));
+				 }
+			   
+			   if(roleMap.get("product")!= null ) {
+				   bean.setProductname(""+roleMap.get("product"));
+				 }
+			   
+			   
+			   if(roleMap.get("category")!= null ) {
+				   bean.setCategory(""+roleMap.get("category"));
+				 }
+			   
+			   if(roleMap.get("pickup_type")!= null ) {
+				   bean.setDdlPickupType(""+roleMap.get("pickup_type"));
+				 }
+			   
+			   if(roleMap.get("pickup_address_1")!= null ) {
+				   bean.setPickupadd1(""+roleMap.get("pickup_address_1"));
+				 }
+			   
+			   if(roleMap.get("pickup_address_2")!= null ) {
+				   bean.setPickupadd2(""+roleMap.get("pickup_address_2"));
+				 }
+			   
+			   if(roleMap.get("pickup_address_3")!= null ) {
+				   bean.setPickupadd3(""+roleMap.get("pickup_address_3"));
+				 }
+			   
+			   if(roleMap.get("pickup_address_4")!= null ) {
+				   bean.setPickupadd4(""+roleMap.get("pickup_address_4"));
+				 }
+			   
+			   if(roleMap.get("state")!= null && !roleMap.get("state").toString().equalsIgnoreCase("Selected") ) {
+				   bean.setState(""+roleMap.get("state"));
+				 }
+			   
+			   
+			   if(roleMap.get("contact_person")!= null ) {
+				   bean.setContactperson(""+roleMap.get("contact_person"));
+				 }
+			    
+			   if(roleMap.get("MOBILE_NO")!= null ) {
+				   bean.setMobileno(""+roleMap.get("MOBILE_NO"));
+				 }
+			    
+			   if(roleMap.get("TELEPHONE_NO")!= null ) {
+				   bean.setTelephoneno(""+roleMap.get("TELEPHONE_NO"));
+				 }
+			    
+			   
+			   if(roleMap.get("CASH_LIMIT")!= null ) {
+				   bean.setCashlimit(""+roleMap.get("CASH_LIMIT"));
+				 }
+			   
+			   if(roleMap.get("DRY_RUN_DATE")!= null ) {
+				   bean.setTxtDryRunDate(""+simpleDateFormat.format((java.sql.Timestamp)roleMap.get("DRY_RUN_DATE")));
+				 }
+			
+			   if(roleMap.get("ACTIVATION_DATE")!= null ) {
+				   bean.setTxtActiveDate(""+simpleDateFormat.format((java.sql.Timestamp)roleMap.get("ACTIVATION_DATE")));
+				 }
+			   
+			   if(roleMap.get("division_code")!= null ) {
+				   bean.setDivisioncode(""+roleMap.get("division_code"));
+				 }
+			   
+			   
+			   if(roleMap.get("ADDITIONAL_INFO_1")!= null ) {
+				   bean.setAdditionalinfo1(""+roleMap.get("ADDITIONAL_INFO_1"));
+				 }
+			   
+			   if(roleMap.get("ADDITIONAL_INFO_2")!= null ) {
+				   bean.setAdditionalinfo2(""+roleMap.get("ADDITIONAL_INFO_2"));
+				 }
+			   
+			   if(roleMap.get("ADDITIONAL_INFO_3")!= null ) {
+				   bean.setAdditionalinfo3(""+roleMap.get("ADDITIONAL_INFO_3"));
+				 }
+			   
+			   if(roleMap.get("ADDITIONAL_INFO_4")!= null ) {
+				   bean.setAdditionalinfo4(""+roleMap.get("ADDITIONAL_INFO_4"));
+				 }
+			   
+			   if(roleMap.get("FIRST_COLLECTION_DATE")!= null ) {
+				   bean.setTxtFirstCollDate(""+simpleDateFormat.format((java.sql.Timestamp)roleMap.get("FIRST_COLLECTION_DATE")));
+				 }
+			   
+			   if(roleMap.get("slip_no")!= null ) {
+				   bean.setSlipno(""+roleMap.get("slip_no"));
+				 }
+			   
+			   if(roleMap.get("amount")!= null ) {
+				   bean.setAmount(""+roleMap.get("amount"));
+				 }
+			   mcpList.add(bean);
+			
+			
+		}
+		
+		String[] columns = {"SL_NO","CUSTOMER CODE","CUSTOMER NAME", "GROUP CODE","BRANCH_CODE","AGENCY_CODE","LOCATION_CODE","LOCATION_NAME","PICKUP CODE","PRODUCT","CATEGORY","PICK-UP TYPE","PICADD1","PICADD2","PICADD3","PICADD4","STATE","CONTACT PERSON","TELNO","MOBILE NUMBER","CASH LIMIT","DRYRUN DATE","ACTIVEDATE","DIVISION CODE","HEIRARCHY CODE","ADDL INFO1","ADDL INFO2","ADDL INFO3","ADDL INFO4","FIRST_COLLECTION_DATE","SLIP_NO","AMOUNT"};
+
+		for (String clm: columns) {
+			String key = clm;
+			HSSFCell headCell = headerRow.createCell(colIndex++);
+			headCell.setCellValue(key);
+		}
+		
+		logger.info("size of list="+mcpList.size());
+		for(int row=0; row<mcpList.size(); row++) {
+			
+			ManageCustomerPickup bean = mcpList.get(row);
+			
+			
+			
+			colIndex = 0; // reset column index;
+			
+			HSSFRow dataRow = worksheet.createRow(rowIndex++);
+			
+			HSSFCell dataCell = dataRow.createCell(colIndex++);
+		    dataCell.setCellValue(bean.getSrno());
+		    
+		    dataCell = dataRow.createCell(colIndex++);
+			dataCell.setCellValue(bean.getCustomercode());
+			
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getCustomername());
+				
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getGroupcode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getSolid());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAgencycode());			 
+			
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getLocationcode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getLocationname());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupcode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getProductname());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getCategory());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getDdlPickupType());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupadd1());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupadd2());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupadd3());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupadd4());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getState());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getContactperson());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getTelephoneno());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getMobileno());
+				
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getCashlimit());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getTxtDryRunDate());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getTxtActiveDate());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getDivisioncode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getHierarachycode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAdditionalinfo1());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAdditionalinfo2());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAdditionalinfo3());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAdditionalinfo4());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getTxtFirstCollDate());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getSlipno());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAmount());
+			
+
+		    
+		 }
+		
+		
+		try {
+		
+			
+			AdminServiceImpl asi =( AdminServiceImpl) this.adminService;// not correct!!
+        	//String path = asi.getPath(); // not correct!!
+			String path = this.getUploadLogisticsDirectoryPath();
+			emailLogger.info("DayEndMailToAgency uploadDirectoryPath="+path);
+			final SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd-HHmmss");
+			Date d=new Date();
+			Random rand = new Random();
+			fileName =path +"DayEndMailToAgency"+sdf.format(d)+"-"+rand.nextInt()+".xls";
+			fos = new FileOutputStream(fileName);
+			workbook.write(fos);
+			fos.close();
+			emailLogger.info("DayEndMailToAgency file created>>>>>>>>>>"+fileName);
+			
+			
+		} catch (Exception e) {
+			logger.error("Error while writing excel", e);
+			
+		}finally{
+			if(fos != null ){
+				try{
+				fos.flush();
+				fos.close();
+				}catch(Exception e){ logger.info("Error in file closing >> "+e.getMessage());}
+			}
+		}
+		return new File(fileName);
+		
+	}
+	
+	public File getExcelFiletbc(List<Map<String, Object>> rolesList)
+	{
+		String fileName="";
+		FileOutputStream fos=null;
+		HSSFWorkbook workbook = new HSSFWorkbook();
+ 		HSSFSheet worksheet = workbook.createSheet("Agency Error Details");
+		
+ 		int rowIndex = 0; // set row index;
+		int colIndex = 0; // set column index;
+		HSSFRow headerRow = worksheet.createRow(rowIndex++);
+		
+		List<ManageCustomerPickup>  mcpList = new ArrayList<ManageCustomerPickup>();
+		final SimpleDateFormat simpleDateFormat = new SimpleDateFormat("dd-MM-yyyy");
+	
+		for (Map<String, Object> roleMap : rolesList) {
+			
+			ManageCustomerPickup bean = new ManageCustomerPickup();
+			   
+			  
+			   if(roleMap.get("recipient_code")!= null ) {
+				   bean.setAgencycode(""+roleMap.get("recipient_code")); 	
+				 }
+			   
+			   if(roleMap.get("sl_no")!= null ) {
+				   bean.setSrno(""+roleMap.get("sl_no")); 	
+				 }
+			
+			
+			   if(roleMap.get("Customer_code")!= null ) {
+				   bean.setCustomercode(""+roleMap.get("Customer_code"));
+				 }
+			
+			   if(roleMap.get("pickup_code")!= null ) {
+				   bean.setPickupcode(""+roleMap.get("pickup_code"));
+				 }
+			    
+			   if(roleMap.get("customer_name")!= null ) {
+				   bean.setCustomername(""+roleMap.get("customer_name"));
+				 }
+			    
+			   if(roleMap.get("group_code")!= null ) {
+				   bean.setGroupcode(""+roleMap.get("group_code"));
+				 }
+			   
+			   
+			   if(roleMap.get("branch_code")!= null ) {
+				   bean.setSolid(""+roleMap.get("branch_code"));
+				 }
+			   
+			   if(roleMap.get("agency_code")!= null ) {
+				   bean.setAgencycode(""+roleMap.get("agency_code"));
+				 }
+			   
+			   
+			   
+			   if(roleMap.get("location_code")!= null ) {
+				   bean.setLocationcode(""+roleMap.get("location_code"));
+				 }
+			   
+			   if(roleMap.get("location_name")!= null ) {
+				   bean.setLocationname(""+roleMap.get("location_name"));
+				 }
+			   
+			   if(roleMap.get("product")!= null ) {
+				   bean.setProductname(""+roleMap.get("product"));
+				 }
+			   
+			   
+			   if(roleMap.get("category")!= null ) {
+				   bean.setCategory(""+roleMap.get("category"));
+				 }
+			   
+			   if(roleMap.get("pickup_type")!= null ) {
+				   bean.setDdlPickupType(""+roleMap.get("pickup_type"));
+				 }
+			   
+			   if(roleMap.get("pickup_address_1")!= null ) {
+				   bean.setPickupadd1(""+roleMap.get("pickup_address_1"));
+				 }
+			   
+			   if(roleMap.get("pickup_address_2")!= null ) {
+				   bean.setPickupadd2(""+roleMap.get("pickup_address_2"));
+				 }
+			   
+			   if(roleMap.get("pickup_address_3")!= null ) {
+				   bean.setPickupadd3(""+roleMap.get("pickup_address_3"));
+				 }
+			   
+			   if(roleMap.get("pickup_address_4")!= null ) {
+				   bean.setPickupadd4(""+roleMap.get("pickup_address_4"));
+				 }
+			   
+			   if(roleMap.get("state")!= null && !roleMap.get("state").toString().equalsIgnoreCase("Selected") ) {
+				   bean.setState(""+roleMap.get("state"));
+				 }
+			   
+			   
+			   if(roleMap.get("contact_person")!= null ) {
+				   bean.setContactperson(""+roleMap.get("contact_person"));
+				 }
+			    
+			   if(roleMap.get("MOBILE_NO")!= null ) {
+				   bean.setMobileno(""+roleMap.get("MOBILE_NO"));
+				 }
+			    
+			   if(roleMap.get("TELEPHONE_NO")!= null ) {
+				   bean.setTelephoneno(""+roleMap.get("TELEPHONE_NO"));
+				 }
+			    
+			   
+			   if(roleMap.get("CASH_LIMIT")!= null ) {
+				   bean.setCashlimit(""+roleMap.get("CASH_LIMIT"));
+				 }
+			   
+			   if(roleMap.get("DRY_RUN_DATE")!= null ) {
+				   bean.setTxtDryRunDate(""+simpleDateFormat.format((java.sql.Timestamp)roleMap.get("DRY_RUN_DATE")));
+				 }
+			
+			   if(roleMap.get("ACTIVATION_DATE")!= null ) {
+				   bean.setTxtActiveDate(""+simpleDateFormat.format((java.sql.Timestamp)roleMap.get("ACTIVATION_DATE")));
+				 }
+			   
+			   if(roleMap.get("division_code")!= null ) {
+				   bean.setDivisioncode(""+roleMap.get("division_code"));
+				 }
+			   
+			   
+			   if(roleMap.get("ADDITIONAL_INFO_1")!= null ) {
+				   bean.setAdditionalinfo1(""+roleMap.get("ADDITIONAL_INFO_1"));
+				 }
+			   
+			   if(roleMap.get("ADDITIONAL_INFO_2")!= null ) {
+				   bean.setAdditionalinfo2(""+roleMap.get("ADDITIONAL_INFO_2"));
+				 }
+			   
+			   if(roleMap.get("ADDITIONAL_INFO_3")!= null ) {
+				   bean.setAdditionalinfo3(""+roleMap.get("ADDITIONAL_INFO_3"));
+				 }
+			   
+			   if(roleMap.get("ADDITIONAL_INFO_4")!= null ) {
+				   bean.setAdditionalinfo4(""+roleMap.get("ADDITIONAL_INFO_4"));
+				 }
+			   
+			   if(roleMap.get("FIRST_COLLECTION_DATE")!= null ) {
+				   bean.setTxtFirstCollDate(""+simpleDateFormat.format((java.sql.Timestamp)roleMap.get("FIRST_COLLECTION_DATE")));
+				 }
+			   
+			   if(roleMap.get("slip_no")!= null ) {
+				   bean.setSlipno(""+roleMap.get("slip_no"));
+				 }
+			   
+			   if(roleMap.get("amount")!= null ) {
+				   bean.setAmount(""+roleMap.get("amount"));
+				 }
+			
+			
+			   mcpList.add(bean);
+			
+			
+		}
+		String[] columns = {"SL_NO","CUSTOMER CODE","CUSTOMER NAME", "GROUP CODE","BRANCH_CODE","AGENCY_CODE","LOCATION_CODE","LOCATION_NAME","PICKUP CODE","PRODUCT","CATEGORY","PICK-UP TYPE","PICADD1","PICADD2","PICADD3","PICADD4","STATE","CONTACT PERSON","TELNO","MOBILE NUMBER","CASH LIMIT","DRYRUN DATE","ACTIVEDATE","DIVISION CODE","HEIRARCHY CODE","ADDL INFO1","ADDL INFO2","ADDL INFO3","ADDL INFO4","FIRST_COLLECTION_DATE","SLIP_NO","AMOUNT"};
+		for (String clm: columns) {
+			String key = clm;
+			HSSFCell headCell = headerRow.createCell(colIndex++);
+			headCell.setCellValue(key);
+		}
+		
+		logger.info("size of list="+mcpList.size());
+		for(int row=0; row<mcpList.size(); row++) {
+			
+			ManageCustomerPickup bean = mcpList.get(row);
+			
+			colIndex = 0; // reset column index;
+			
+			HSSFRow dataRow = worksheet.createRow(rowIndex++);
+			
+			HSSFCell dataCell = dataRow.createCell(colIndex++);
+		    dataCell.setCellValue(bean.getSrno());
+		    
+		    dataCell = dataRow.createCell(colIndex++);
+			dataCell.setCellValue(bean.getCustomercode());
+			
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getCustomername());
+				
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getGroupcode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getSolid());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAgencycode());			 
+			
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getLocationcode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getLocationname());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupcode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getProductname());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getCategory());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getDdlPickupType());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupadd1());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupadd2());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupadd3());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getPickupadd4());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getState());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getContactperson());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getTelephoneno());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getMobileno());
+				
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getCashlimit());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getTxtDryRunDate());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getTxtActiveDate());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getDivisioncode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getHierarachycode());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAdditionalinfo1());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAdditionalinfo2());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAdditionalinfo3());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAdditionalinfo4());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getTxtFirstCollDate());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getSlipno());
+			 
+			 dataCell = dataRow.createCell(colIndex++);
+			 dataCell.setCellValue(bean.getAmount());
+		    
+		 }
+		
+		
+		try {
+		
+			
+			AdminServiceImpl asi =( AdminServiceImpl) this.adminService;// not correct!!
+        	//String path = asi.getPath(); // not correct!!
+			String path = this.getUploadLogisticsDirectoryPath();
+			logger.info("uploadDirectoryPath="+path);
+			final SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd-HHmmss");
+			Date d=new Date();
+			Random rand = new Random();
+			fileName =path +"DayEndMailToTbc"+sdf.format(d)+"-"+rand.nextInt()+".xls";
+			fos = new FileOutputStream(fileName);
+			workbook.write(fos);
+			fos.close();
+		} catch (Exception e) {
+			logger.error("Error while writing excel", e);
+			
+		}finally{
+			if(fos != null ){
+				try{
+				fos.flush();
+				fos.close();
+				}catch(Exception e){ logger.info("Error in file closing >> "+e.getMessage());}
+			}
+		}
+		
+		return new File(fileName);
+		
+	}
+	
+	public void updateUserStatusForInactivity() throws ServiceException {
+		emailLogger.info(String.format("updateUserStatusForInactivity()"));
+		logger.debug(String.format("updateUserStatusForInactivity()"));
+		String query = this.sqlProperties.getProperty("updateUserStatusForInactivity");
+		if(query == null){
+			throw new ServiceException("[updateUserStatusForInactivity] value is not set in sql.properties file!");
+		}
+		
+		try {
+			this.jdbcTemplate.update(query);
+			logger.debug("updateUserStatusForInactivity "+this.jdbcTemplate.update(query));
+		}
+		catch(Exception ex) {
+			logger.error("Could not update users with active/inactive state!", ex);
+		}
+	}
+	
+	public void todaySuccessfulPickups(Map<String, Object> successfulPickup) throws DaoException {
+		if (logger.isDebugEnabled()) {
+			logger.info(String.format("todaySuccessfulPickups(successfulPickup=%s)", successfulPickup));
+		}
+
+		final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+		List<EmailData> schedulerJobData = new ArrayList<EmailData>();
+
+		Date d = new Date();
+
+		String cmsEmailId = this.databaseProperties.getProperty("userId");
+
+		final String saveEmailEvent = this.sqlProperties.getProperty("saveEMailEventForSuccessfulPickup");
+		if (saveEmailEvent == null) {
+			throw new DaoException("[saveEMailEventForSuccessfulPickup] value is not set in sql.properties!");
+		}
+
+		try {
+			MapSqlParameterSource params = new MapSqlParameterSource();
+			params.addValue("event", "Successful_Pickup", Types.VARCHAR);
+			params.addValue("recipient", "Customer", Types.VARCHAR);
+			params.addValue("recipientCode", (String) successfulPickup.get("CUSTOMER_CODE"), Types.VARCHAR);
+			params.addValue("customerCode", (String) successfulPickup.get("CUSTOMER_CODE"), Types.VARCHAR);
+			params.addValue("jobStatus", "complete", Types.VARCHAR);
+			params.addValue("processStatus", "finished", Types.VARCHAR);
+
+			Map<String, Object> attachmentsData = new HashMap<String, Object>();
+			attachmentsData.put("customerCode", (String) successfulPickup.get("CUSTOMER_CODE"));
+			String subject = "Todays Successful Pickup ";
+			String body = "Please find the attached file for Todays Successful Pickup ";
+
+			//String emailId = (String) successfulPickup.get("CLIENT_HO_EMAILIDS");
+			schedulerJobData.add(new EmailData("Successful_Pickup", cmsEmailId,
+					new String[] { "manishb@winsoftech.com" }, null, subject, body, attachmentsData));
+
+			this.namedParamJdbcTemplate.update(saveEmailEvent, params);
+			this.executor.execute(this.getAuthorizationEmailNotificationTask(schedulerJobData));
+
+		} catch (Exception e) {
+			logger.error("Error while Sending Mail for Successful Pickups", e);
+			throw new DaoException(e.getLocalizedMessage());
+		}
+
+	}
+
+	public void todayPendingPickups(Map<String, Object> pendingPickup) throws DaoException {
+		if (logger.isDebugEnabled()) {
+			logger.info(String.format("todayPendingPickups(pendingPickups=%s)", pendingPickup));
+		}
+		final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+		List<EmailData> schedulerJobData = new ArrayList<EmailData>();
+
+		Date d = new Date();
+
+		String cmsEmailId = this.databaseProperties.getProperty("userId");
+
+		final String saveEmailEvent = this.sqlProperties.getProperty("saveEMailEventForPendingPickups");
+		if (saveEmailEvent == null) {
+			throw new DaoException("[saveEMailEventForPendingPickups] value is not set in sql.properties!");
+		}
+
+		try {
+
+			MapSqlParameterSource params = new MapSqlParameterSource();
+			params.addValue("event", "Pending_Pickup", Types.VARCHAR);
+			params.addValue("recipient", "Agency", Types.VARCHAR);
+			params.addValue("recipientCode", (String) pendingPickup.get("AGENCY_CODE"), Types.VARCHAR);
+			params.addValue("jobStatus", "completed", Types.VARCHAR);
+			params.addValue("processStatus", "finished", Types.VARCHAR);
+			params.addValue("pickupDate", (java.sql.Timestamp) pendingPickup.get("PICKUP_DATE"), Types.TIMESTAMP);
+
+			Map<String, Object> attachmentsData = new HashMap<String, Object>();
+			attachmentsData.put("agencyCode", (String) pendingPickup.get("AGENCY_CODE"));
+
+			String subject = "Pending_Pickup For Agency" + (String) pendingPickup.get("AGENCY_CODE");
+			String body = "Please find consolidated list of the pending pickups to agency "
+					+ (String) pendingPickup.get("AGENCY_CODE") + " For today ";
+
+			String getAgencyDetailsQuery = this.sqlProperties.getProperty("getagencyemailfromagencymaster");
+			StringBuilder agencyemail = new StringBuilder("");
+			List<Map<String, Object>> emailList = this.jdbcTemplate.queryForList(getAgencyDetailsQuery,
+					(String) pendingPickup.get("AGENCY_CODE"));
+			for (Map<String, Object> emailMap : emailList) {
+				AddAgencyBean emailadd = new AddAgencyBean();
+				if (emailMap.get("EMAIL_1") != null)
+					agencyemail.append("" + emailMap.get("EMAIL_1"));
+				emailadd.setEmail1("" + emailMap.get("EMAIL_1"));
+				if (emailMap.get("EMAIL_2") != null)
+					agencyemail.append("," + emailMap.get("EMAIL_2"));
+				if (emailMap.get("EMAIL_3") != null)
+					agencyemail.append("," + emailMap.get("EMAIL_3"));
+				if (emailMap.get("EMAIL_4") != null)
+					agencyemail.append("," + emailMap.get("EMAIL_4"));
+				if (emailMap.get("EMAIL_5") != null)
+					agencyemail.append("," + emailMap.get("EMAIL_5"));
+				logger.info("Agency email=" + agencyemail.toString());
+			}
+			String agencyMulEmail[] = agencyemail.toString().split(",");
+
+			String cc = null;
+			schedulerJobData.add(new EmailData("Pending_Pickup", cmsEmailId, agencyMulEmail, "shashanks@winsoftech.com",
+					subject, body, attachmentsData));
+			this.namedParamJdbcTemplate.update(saveEmailEvent, params);
+			this.executor.execute(this.getAuthorizationEmailNotificationTask(schedulerJobData));
+		} catch (Exception e) {
+			logger.error("Error while Sending Mail for Pending Pickups", e);
+			throw new DaoException(e.getLocalizedMessage());
+		}
+
+	}
+
+	//// System generated alert after every 1 hours for the pending Pickups from
+	//// maximum Pick up timing to Agency ID and CCPH ID.
+
+	public void todayPickups(Map<String, Object> todayPickup) throws DaoException {
+		if (logger.isDebugEnabled()) {
+			logger.info(String.format("todayPickups(todayPickups=%s)", todayPickup));
+		}
+		
+		final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy");
+		List<EmailData> schedulerJobData = new ArrayList<EmailData>();
+
+		Date d = new Date();
+
+		String cmsEmailId = this.databaseProperties.getProperty("userId");
+
+		final String saveEmailEvent = this.sqlProperties.getProperty("saveEMailEventForPickups");
+		if (saveEmailEvent == null) {
+			throw new DaoException("[saveEMailEventForPendingPickups] value is not set in sql.properties!");
+		}
+
+		try {
+
+			MapSqlParameterSource params = new MapSqlParameterSource();
+			params.addValue("event", "Alert_Pending_Pickup", Types.VARCHAR);
+			params.addValue("recipient", "Agency", Types.VARCHAR);
+			params.addValue("recipientCode", (String) todayPickup.get("AGENCY_CODE"), Types.VARCHAR);
+			params.addValue("userId", (String) todayPickup.get("CREATED_BY"), Types.VARCHAR);
+			params.addValue("customerCode", (String) todayPickup.get("CUSTOMER_CODE"), Types.VARCHAR);
+			params.addValue("pickupCode", (String) todayPickup.get("PICKUP_CODE"), Types.VARCHAR);
+			params.addValue("reactive", (String) todayPickup.get("REACTIVE"), Types.VARCHAR);
+			params.addValue("product", (String) todayPickup.get("PRODUCT"), Types.VARCHAR);
+			params.addValue("slNo", (String) todayPickup.get("SL_NO"), Types.VARCHAR);
+			params.addValue("jobStatus", "complete", Types.VARCHAR);
+			params.addValue("processStatus", "finished", Types.VARCHAR);
+			params.addValue("branchCode", (String) todayPickup.get("BRANCH_CODE"), Types.VARCHAR);
+			params.addValue("pickupType", (String) todayPickup.get("PICKUP_TYPE"), Types.VARCHAR);
+			params.addValue("cashLimit", (String) todayPickup.get("CASH_LIMIT"), Types.VARCHAR);
+			params.addValue("pickupAddress1", (String) todayPickup.get("PICKUP_ADDRESS_1"), Types.VARCHAR);
+			params.addValue("pickupAddress2", (String) todayPickup.get("PICKUP_ADDRESS_2"), Types.VARCHAR);
+			params.addValue("pickupAddress3", (String) todayPickup.get("PICKUP_ADDRESS_3"), Types.VARCHAR);
+			params.addValue("pickupAddress4", (String) todayPickup.get("PICKUP_ADDRESS_4"), Types.VARCHAR);
+			params.addValue("reactivationDate", (java.sql.Timestamp) todayPickup.get("REACTIVATION_DATE"),
+					Types.TIMESTAMP);
+			params.addValue("pickupDate", (java.sql.Timestamp) todayPickup.get("PICKUP_DATE"), Types.TIMESTAMP);
+			Map<String, Object> attachmentsData = new HashMap<String, Object>();
+			attachmentsData.put("customerCode", (String) todayPickup.get("CUSTOMER_CODE"));
+			attachmentsData.put("product", (String) todayPickup.get("PRODUCT"));
+			attachmentsData.put("pickupCode", (String) todayPickup.get("PICKUP_CODE"));
+			attachmentsData.put("sl_no", (String) todayPickup.get("SL_NO"));
+
+
+			String getAgencyDetailsQuery = this.sqlProperties.getProperty("getagencyemailfromagencymaster");
+			StringBuilder agencyemail = new StringBuilder("");
+			List<Map<String, Object>> emailList = this.jdbcTemplate.queryForList(getAgencyDetailsQuery,
+					(String) todayPickup.get("AGENCY_CODE"));
+			for (Map<String, Object> emailMap : emailList) {
+				AddAgencyBean emailadd = new AddAgencyBean();
+				if (emailMap.get("EMAIL_1") != null)
+					agencyemail.append("" + emailMap.get("EMAIL_1"));
+				emailadd.setEmail1("" + emailMap.get("EMAIL_1"));
+				if (emailMap.get("EMAIL_2") != null)
+					agencyemail.append("," + emailMap.get("EMAIL_2"));
+				if (emailMap.get("EMAIL_3") != null)
+					agencyemail.append("," + emailMap.get("EMAIL_3"));
+				if (emailMap.get("EMAIL_4") != null)
+					agencyemail.append("," + emailMap.get("EMAIL_4"));
+				if (emailMap.get("EMAIL_5") != null)
+					agencyemail.append("," + emailMap.get("EMAIL_5"));
+				logger.info("Agency email=" + agencyemail.toString());
+			}
+			String agencyMulEmail[] = agencyemail.toString().split(",");
+
+			String subject = "Alert_Pending_Pickup " + (String) todayPickup.get("PICKUP_CODE") + "  slNo >>"
+					+ (String) todayPickup.get("SL_NO");
+
+			String body = "hey mail sent " + (String) todayPickup.get("PICKUP_CODE");
+
+			String emailId = (String) todayPickup.get("CLIENT_HO_EMAILIDS");
+
+			schedulerJobData.add(new EmailData("Alert_Pending_Pickup", cmsEmailId,
+					agencyMulEmail, null, subject, body, attachmentsData));
+
+			this.namedParamJdbcTemplate.update(saveEmailEvent, params);
+			this.executor.execute(this.getAuthorizationEmailNotificationTask(schedulerJobData));
+
+		} catch (Exception e) {
+			logger.error("Error while Sending Mail for Pending Pickups (Alert)", e);
+			throw new DaoException(e.getLocalizedMessage());
+		}
+
+	}
+	
+    public void dailyMorningProcess() throws SQLException, DaoException {
+        try {
+            logger.info("Start morningProcess() scheduler ");
+            if (LastInvocationTimeOfDailyProcess != null) {
+                Calendar now = Calendar.getInstance();
+                long diff = now.getTimeInMillis() - LastInvocationTimeOfDailyProcess.getTimeInMillis();
+                if (diff < 60000 ) {
+                    logger.error("faulty invocation within " + diff + " ms - returning dailyMorningProcess()");
+                    return;
+                }
+            }
+    
+            Calendar cal = Calendar.getInstance();
+            cal.add(Calendar.DATE, -1);
+            String fromDate = sdf.format(cal.getTime()).toString();
+            File dayEndReport = reportsDao.exportsearchhDayEndReport(fromDate, Constants.TXT);
+            this.sendReportsOnSFTP(dayEndReport, fromDate, Constants.DAY_END_REPORT);
+            File cashDeliveryReport = reportsDao.exportSearchCashDeliveryReport(fromDate, Constants.TXT);
+            this.sendReportsOnSFTP(cashDeliveryReport, fromDate, Constants.CASH_DELIVERY_REPORT);
+        }catch(Exception ex) {
+            logger.error("Error while executing morning process");
+            ex.printStackTrace();
+        }
+    }
+
+    public void monthlyMorningProcess() throws SQLException, DaoException {
+        try {
+            logger.info("Start morningProcess() scheduler ");
+            if (LastInvocationTimeOfDailyProcess != null) {
+                Calendar now = Calendar.getInstance();
+                long diff = now.getTimeInMillis() - LastInvocationTimeOfDailyProcess.getTimeInMillis();
+                if (diff < 60000 ) {
+                    logger.error("faulty invocation within " + diff + " ms - returning monthlyMorningProcess()");
+                    return;
+                }
+            }
+    
+            Calendar cal = Calendar.getInstance();
+            cal.set(Calendar.DAY_OF_MONTH,
+                    cal.getActualMinimum(Calendar.DAY_OF_MONTH));
+            String fromDate = sdf.format(cal.getTime()).toString();
+            cal.set(Calendar.DAY_OF_MONTH,
+                    cal.getActualMaximum(Calendar.DAY_OF_MONTH));
+            String toDate = sdf.format(cal.getTime()).toString();
+            File monthEndReport = reportsDao.exportsearchhMonthEndReport(fromDate, toDate, "txt");
+            this.sendReportsOnSFTP(monthEndReport, toDate, Constants.MONTH_END_REPORT);
+        }catch(Exception ex) {
+            logger.error("Error while executing morning process");
+            ex.printStackTrace();
+        }
+    }
+
+	public void sendReportsOnSFTP(File report, String date, String reportType) throws DaoException, ParseException {
+		if (logger.isDebugEnabled()) {
+			logger.debug(String.format("sendReportsOnSFTP(report = %s, date = %s, reportType = %s)", report.getName(),
+					date, reportType));
+		}
+
+		Session session = null;
+		Channel channel = null;
+		ChannelSftp channelSftp = null;
+		String fileName = report.getName();
+		logger.info("preparing the host information for sftp.");
+
+		try {
+
+			String SFTPHOST = null;
+			int SFTPPORT = 0;
+			String SFTPUSER = null;
+			String SFTPPASS = null;
+			String SFTPWORKINGDIR = null;
+
+			if (Constants.DAY_END_REPORT.equalsIgnoreCase(reportType)) {
+				SFTPHOST = this.databaseProperties.getProperty(Constants.SFTP_HOST_FOR_DAYEND);
+				SFTPPORT = Integer.parseInt(this.databaseProperties.getProperty(Constants.SFTP_PORT_FOR_DAYEND).trim());
+				SFTPUSER = this.databaseProperties.getProperty(Constants.SFTP_USERNAME_FOR_DAYEND);
+				SFTPPASS = this.databaseProperties.getProperty(Constants.SFTP_PASSWORD_FOR_DAYEND);
+				SFTPWORKINGDIR = this.databaseProperties.getProperty(Constants.SFTP_DAY_END_REPORT_WORKING_DIR);
+			} else if (Constants.MONTH_END_REPORT.equalsIgnoreCase(reportType)) {
+				SFTPHOST = this.databaseProperties.getProperty(Constants.SFTP_HOST_FOR_MONTHEND);
+				SFTPPORT = Integer
+						.parseInt(this.databaseProperties.getProperty(Constants.SFTP_PORT_FOR_MONTHEND).trim());
+				SFTPUSER = this.databaseProperties.getProperty(Constants.SFTP_USERNAME_FOR_MONTHEND);
+				SFTPPASS = this.databaseProperties.getProperty(Constants.SFTP_PASSWORD_FOR_MONTHEND);
+				SFTPWORKINGDIR = this.databaseProperties.getProperty(Constants.SFTP_MONTH_END_REPORT_WORKING_DIR);
+			} else if (Constants.CASH_DELIVERY_REPORT.equalsIgnoreCase(reportType)) {
+				SFTPHOST = this.databaseProperties.getProperty(Constants.SFTP_HOST_FOR_CASH_DELIVERY);
+				SFTPPORT = Integer
+						.parseInt(this.databaseProperties.getProperty(Constants.SFTP_PORT_FOR_CASH_DELIVERY).trim());
+				SFTPUSER = this.databaseProperties.getProperty(Constants.SFTP_USERNAME_CASH_DELIVERY);
+				SFTPPASS = this.databaseProperties.getProperty(Constants.SFTP_PASSWORD_CASH_DELIVERY);
+				SFTPWORKINGDIR = this.databaseProperties.getProperty(Constants.SFTP_CASH_DELIVERY_REPORT_WORKING_DIR);
+			}
+
+			if (SFTPHOST == null)
+				throw new DaoException("Could not read sftp host from database.properties");
+
+			if (SFTPPORT == 0)
+				throw new DaoException("Could not read sftp port from database.properties");
+
+			if (SFTPUSER == null)
+				throw new DaoException("Could not read sftp username from database.properties");
+
+			if (SFTPPASS == null)
+				throw new DaoException("Could not read sftp password from database.properties");
+
+			if (SFTPWORKINGDIR == null)
+				throw new DaoException("Could not read sftp working dir from database.properties");
+
+			SimpleDateFormat formatNowMonth = new SimpleDateFormat("MMM");
+			SimpleDateFormat formatNowYear = new SimpleDateFormat("YYYY");
+			String month = formatNowMonth.format(sdf.parse(date));
+			logger.info("month="+month);
+			String year = formatNowYear.format(sdf.parse(date));
+			logger.info("year="+year);
+			String folderName = month.toUpperCase() + Constants.DASH + year;
+			logger.info("folderName="+folderName);
+			//SFTPWORKINGDIR = SFTPWORKINGDIR + "" + folderName;
+			logger.info("preparing for conneting");
+			JSch jsch = new JSch();
+			session = jsch.getSession(SFTPUSER, SFTPHOST, SFTPPORT);
+			session.setPassword(SFTPPASS);
+			java.util.Properties config = new java.util.Properties();
+			config.put("StrictHostKeyChecking", "no");
+			session.setConfig(config);
+			session.connect();
+			logger.info("Host connected.");
+			channel = session.openChannel(Constants.SFTP);
+			channel.connect();
+			channelSftp = (ChannelSftp) channel;
+			channelSftp.cd(SFTPWORKINGDIR);
+			File dir = new File(SFTPWORKINGDIR);
+
+			Vector filelist = channelSftp.ls(SFTPWORKINGDIR);
+			for (int i = 0; i < filelist.size(); i++) {
+				logger.info(filelist.get(i).toString());
+
+				SftpATTRS attrs = channelSftp.stat(SFTPWORKINGDIR + "" + folderName);
+
+				if (attrs != null) {
+					logger.info("Directory exists IsDir=" + attrs.isDir());
+				} else {
+					logger.info("Creating dir " + dir);
+					channelSftp.mkdir(folderName);
+					channelSftp.cd(folderName);
+				}
+
+			}
+			channelSftp.cd(SFTPWORKINGDIR + "" + folderName);
+			logger.info("channel connected.");
+			channelSftp.put(new FileInputStream(report), fileName);
+			logger.info("File tranferred completed");
+		} catch (DaoException ex) {
+			logger.error("Dao exception.=", ex);
+			throw ex;
+		} catch (JSchException ex) {
+			ex.printStackTrace();
+			logger.error("JSchException found while transferring the response.", ex);
+		} catch (SftpException ex) {
+			ex.printStackTrace();
+			logger.error("SftpException found while transferring the response.", ex);
+		} catch (Exception ex) {
+			ex.printStackTrace();
+			logger.error("Exception found while transferring the response.", ex);
+		} finally {
+			channelSftp.exit();
+			channel.disconnect();
+			session.disconnect();
+		}
+
+        try {
+            final String saveTbmsEvent = this.sqlProperties.getProperty("saveTbmsEventForReports");
+            if (saveTbmsEvent == null) {
+                throw new DaoException("[saveTbmsEventForReports] value is not set in sql.properties!");
+            }
+
+            MapSqlParameterSource param = new MapSqlParameterSource();
+            param.addValue(Constants.REPORT_TYPE, reportType, Types.VARCHAR);
+            param.addValue(Constants.FROM_DATE, date, Types.VARCHAR);
+            param.addValue(Constants.IS_PUSHED, Constants.Y, Types.VARCHAR);
+            this.namedParamJdbcTemplate.update(saveTbmsEvent, param);
+
+            final String saveEmailEvent = this.sqlProperties.getProperty("saveEmailEventForReports");
+            if (saveEmailEvent == null) {
+                throw new DaoException("[saveEmailEventForReports] value is not set in sql.properties!");
+            }
+            MapSqlParameterSource params = new MapSqlParameterSource();
+            params.addValue(Constants.EVENT, reportType, Types.VARCHAR);
+            params.addValue(Constants.JOB_STATUS, Constants.COMPLETE, Types.VARCHAR);
+            params.addValue(Constants.PROCESS_STATUS, Constants.FINISHED, Types.VARCHAR);
+
+            String subject = "TBMS Report - "+reportType+" for date: "+date;
+            List<EmailData> schedulerJobData = new ArrayList<EmailData>();
+            String body = "Please find attached herewith today's TBMS Report - "+reportType+" for date: "+date;
+            String cmsEmailId[] = {(this.databaseProperties.getProperty("cmsEmailId")).toString()};
+            schedulerJobData.add(new EmailData(reportType, "no-reply.logistics@axisbank.com", cmsEmailId, null, subject, body, null));
+
+            this.namedParamJdbcTemplate.update(saveEmailEvent, params);
+            this.executor.execute(this.getAuthorizationEmailNotificationTask(schedulerJobData));
+
+        } catch (DaoException ex) {
+        logger.error("Error found while sending mail.", ex);
+            throw ex;
+        } catch (Exception ex) {
+            logger.error("Error found while sending mail.", ex);
+            final String saveTbmsEvent = this.sqlProperties.getProperty("saveTbmsEventForReports");
+            MapSqlParameterSource param = new MapSqlParameterSource();
+            param.addValue(Constants.REPORT_TYPE, reportType, Types.VARCHAR);
+            param.addValue(Constants.FROM_DATE, date, Types.VARCHAR);
+            param.addValue(Constants.IS_PUSHED, Constants.N, Types.VARCHAR);
+            this.namedParamJdbcTemplate.update(saveTbmsEvent, param);
+        }
+    }
+
+
+	public void eodTrigger() {
+		final Schedules _this = this;
+		CustomeExecutorService.getEmailExcutorService().execute(new Runnable() {
+			public void run() {
+				try {
+					MessageLogger.info(logger, String.format("startupUpdateProcess() started"));
+					logger.debug(String.format("startupUpdateProcess() started"));
+					_this.startupUpdateProcess();
+					MessageLogger.info(logger, String.format("startupUpdateProcess() end"));
+					logger.debug(String.format("startupUpdateProcess() end"));
+
+				} catch (Exception ex) {
+					MessageLogger.error(logger, String.format("Error while updating the startup", ex));
+				}
+			}
+		});
+
+		CustomeExecutorService.getEmailExcutorService().execute(new Runnable() {
+			public void run() {
+				try {
+					MessageLogger.info(logger, String.format("pickupDiscontinuationProcessAndSendMail() started"));
+					_this.pickupDiscontinuationProcessAndSendMail();
+					MessageLogger.info(logger, String.format("pickupDiscontinuationProcessAndSendMail() end"));
+
+				} catch (Exception ex) {
+					MessageLogger.error(logger, String.format("Error while pickup discontinuation process", ex));
+				}
+			}
+		});
+
+		CustomeExecutorService.getEmailExcutorService().execute(new Runnable() {
+			public void run() {
+				try {
+					MessageLogger.info(logger, String.format("dayEndAndTbcSendMail() started"));
+					_this.dayEndAndTbcSendMail();
+					MessageLogger.info(logger, String.format("dayEndAndTbcSendMail() end"));
+				} catch (Exception ex) {
+					MessageLogger.error(logger, String.format("Error while sending day end mails", ex));
+				}
+			}
+		});
+		/*
+		CustomeExecutorService.getEmailExcutorService().execute(new Runnable() {
+			public void run() {
+				try {
+					MessageLogger.info(logger, String.format("dayEndAndTbcSendMail() started"));
+					_this.dayEndPendingPickupsMail();
+					MessageLogger.info(logger, String.format("dayEndAndTbcSendMail() end"));
+				} catch (Exception ex) {
+					MessageLogger.error(logger, String.format("Error while sending day end mails", ex));
+				}
+			}
+		});
+		
+		CustomeExecutorService.getEmailExcutorService().execute(new Runnable() {
+			public void run() {
+				try {
+					MessageLogger.info(logger, String.format("dayEndPickupMISToCustomer() started"));
+					_this.dayEndPickupMISToCustomer();
+					MessageLogger.info(logger, String.format("dayEndPickupMISToCustomer() end"));
+				} catch (Exception ex) {
+					MessageLogger.error(logger, String.format("Error while sending day end mails", ex));
+				}
+			}
+		});*/
+	}
+
+	public void startupUpdateProcess() {
+		try {
+			MessageLogger.info(logger, String.format("inside startupUpdateProcess()"));
+		SimpleJdbcCall simpleJdbcCall = new SimpleJdbcCall(jdbcTemplate).withProcedureName("PRC_UPDATE_STARTUP_FLAG");
+		logger.debug("Before Execute PRC_UPDATE_STARTUP_FLAG");
+		Map<String, Object> simpleJdbcCallResult = simpleJdbcCall.execute();
+		logger.debug("Before After PRC_UPDATE_STARTUP_FLAG");
+		}
+		catch(Exception ex) {
+	        MessageLogger.error(logger, String.format("Error while sending day end mails", ex));
+		}
+	}
+
+	public void pickupDiscontinuationProcessAndSendMail() throws DaoException, SQLException {
+		try {
+			MessageLogger.info(logger, String.format("PRC_DISCONTINUE_PKUP M to Y before"));
+			SimpleJdbcCall simpleJdbcCall1 = new SimpleJdbcCall(jdbcTemplate).withProcedureName("PRC_DISCONTINUE_PKUP");
+			Map<String, Object> inParamMap = new HashMap<String, Object>();
+			inParamMap.put("i_method", "M_TO_Y");
+			SqlParameterSource in = new MapSqlParameterSource(inParamMap);
+			Map<String, Object> execute = simpleJdbcCall1.execute(in);
+			MessageLogger.info(logger, String.format("PRC_DISCONTINUE_PKUP M to Y after"));
+		} catch (Exception ex) {
+			logger.error("Error while exicuting M to Y PRC_DISCONTINUE_PKUP SP=", ex);
+		}finally {
+			try {
+				MessageLogger.info(logger,String.format("inside pickupDiscontinuationProcessAndSendMail(PRC_DISCONTINUE_PKUP Y to D)"));
+				SimpleJdbcCall simpleJdbcCallForDisc = new SimpleJdbcCall(jdbcTemplate).withProcedureName("PRC_DISCONTINUE_PKUP");
+				Map<String, Object> inParamMapForDisc = new HashMap<String, Object>();
+				inParamMapForDisc.put("i_method","Y_TO_D");
+	            SqlParameterSource inForDisc = new MapSqlParameterSource(inParamMapForDisc);
+	            Map<String, Object> executeForDisc = simpleJdbcCallForDisc.execute(inForDisc);
+				Map<String, Object> result = new HashMap<String, Object>();
+				String getAllCustomerPickupDeactive = this.sqlProperties.getProperty("getAllCustomerPickupDeactive");
+				List<Map<String, Object>> getAllCustomerPickupDeactiveDate = jdbcTemplate
+						.queryForList(getAllCustomerPickupDeactive);
+				MessageLogger.info(logger,String.format("inside pickupDiscontinuationProcessAndSendMail(PRC_DISCONTINUE_PKUP Y to D)  SP executed="+getAllCustomerPickupDeactiveDate.size()));
+				for (Map<String, Object> listValue : getAllCustomerPickupDeactiveDate) {
+					logger.info("sl_no= for deactivation =>" + listValue.get("SL_NO"));
+					String srno = (String) listValue.get("SL_NO");
+					String username = (String) listValue.get("CREATED_BY");
+					String deactivationDate = sdf.format((java.sql.Timestamp) listValue.get("DEACTIVATION_DATE"));
+					dayEndDeactivationMail(srno, username, deactivationDate);
+				}
+				MessageLogger.info(logger,String.format("inside pickupDiscontinuationProcessAndSendMail() process end="+getAllCustomerPickupDeactiveDate.size()));
+			} catch (Exception ex) {
+				logger.error(String.format("Error while sending Discontinuation mails", ex));
+			}
+		}
+	}
+
+	public void dayEndAndTbcSendMail() throws DaoException {
+		try {
+			MessageLogger.info(logger, String.format("inside dayEndAndTbcSendMail()"));
+			String getAllAgencyLOI = this.sqlProperties.getProperty("getAllAgencyLOI");
+			List<Map<String, Object>> getAllAgencyLOIList = jdbcTemplate.queryForList(getAllAgencyLOI);
+			for (Map<String, Object> listValueLOI : getAllAgencyLOIList) {
+				String agency_code = (String) listValueLOI.get("recipient_code");
+				dayendAgency(agency_code);
+				dayendTbc(agency_code);
+			}
+		} catch (Exception ex) {
+			MessageLogger.error(logger, String.format("Error while sending Discontinuation mails", ex));
+		}
+	}
+
+	public Map<String, Object> getMessageConfigurations(String user, Map<String, String> queryParam)
+			throws ServiceException {
+		MessageLogger.debug(logger, String.format("getMessageConfigurations(queryParam = %s)", queryParam));
+		try {
+			return adminDao.getMessageConfigurations(user, queryParam);
+		} catch (DaoException ex) {
+			throw new ServiceException("Could not read message configurations.",ex);
+}
+	}
+
+	public void dayEndPendingPickupsMail() throws DaoException {
+		try {
+			MessageLogger.info(logger, String.format("inside dayEndPendingPickupsMail()"));
+			String getAgencyCodeForPendingPickups = this.sqlProperties.getProperty("getAgencyCodeForPendingPickups");
+			List<Map<String,Object>> getAllAgencyCodes=jdbcTemplate.queryForList(getAgencyCodeForPendingPickups);
+			for(Map<String,Object> getAgencyCode :getAllAgencyCodes) {
+					todayPendingPickups(getAgencyCode);
+			}
+			this.timelyProcessForEmailTrigger();
+		} catch (Exception ex) {
+			MessageLogger.error(logger, String.format("Error while sending pending pickup mails mails", ex));
+		}
+	}
+
+	public void dayEndPickupMISToCustomer() throws DaoException {
+		try {
+			MessageLogger.info(logger, String.format("inside dayEndPendingPickupsMail()"));
+			String getCustomerCodeForTodaysSuccessfulPickups = this.sqlProperties.getProperty("getCustomerCodeForTodaysSuccessfulPickups");
+			List<Map<String,Object>> getAllAgencyCodes=jdbcTemplate.queryForList(getCustomerCodeForTodaysSuccessfulPickups);
+			for(Map<String,Object> getAgencyCode :getAllAgencyCodes) {
+				todaySuccessfulPickups(getAgencyCode);
+			}
+		} catch (Exception ex) {
+			MessageLogger.error(logger, String.format("Error while sending pending pickup mails mails", ex));
+		}
+	}
+	
+	public void bodProcess() throws SQLException, DaoException {
+        try {
+            logger.debug("Start bodProcess() scheduler ");
+            if (LastInvocationTimeOfDailyProcess != null) {
+                Calendar now = Calendar.getInstance();
+                long diff = now.getTimeInMillis() - LastInvocationTimeOfDailyProcess.getTimeInMillis();
+                if (diff < 60000) {
+                    logger.error("faulty invocation within " + diff + " ms - returning dailyProcess()");
+                    return;
+                }
+            }
+
+            this.customersBodProcess();
+        } catch (Exception e) {
+            logger.error("Error while bodProcess ", e);
+        }
+    }
+	
+	private void customersBodProcess() {
+        logger.debug("Customers BodProcess Started to sync customers");
+        SimpleJdbcCall simpleJdbcCall = new SimpleJdbcCall(jdbcTemplate)
+                .withProcedureName("PRC_CUST_NAME_SYNC_SP")
+                .declareParameters(new SqlParameter("I_USER_ID", Types.VARCHAR),
+                        new SqlOutParameter("O_RESULT", OracleTypes.VARCHAR),
+                        new SqlOutParameter("O_MSG", OracleTypes.VARCHAR));
+        Map<String, Object> inParamMap = new HashMap<String, Object>();
+        inParamMap.put("I_USER_ID", Constants.SYSTEM);
+        SqlParameterSource in = new MapSqlParameterSource(inParamMap);
+
+        String msg = "";
+
+        try {
+            logger.debug("Before Execute PRC_CUST_NAME_SYNC_SP");
+            Map<String, Object> simpleJdbcCallResult = simpleJdbcCall.execute(in);
+            logger.debug("After Execute PRC_CUST_NAME_SYNC_SP");
+            String result = (String) simpleJdbcCallResult.get("O_RESULT");
+            msg = (String) simpleJdbcCallResult.get("O_MSG");
+            logger.debug("PRC_CUST_NAME_SYNC_SP result: {result: " + result + ", msg: " + msg + "}");
+        } catch (Exception e) {
+            logger.error("Error while Execute PRC_CUST_NAME_SYNC_SP SP ", e);
+        }
+    }
+}
+

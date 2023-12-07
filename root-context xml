@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+	<bean id="messageSource" class="org.springframework.context.support.ResourceBundleMessageSource">
+		<property name="basenames">
+		    <list>
+				<value>messages</value>
+		    </list>
+		</property>
+    </bean>
+    
+	<!-- Root Context: defines shared resources visible to all other web components -->
+	<bean  class="org.springframework.beans.factory.config.PropertyPlaceholderConfigurer">
+	    <property name="locations">
+	       <list>
+	         <value>classpath:database.properties</value>
+	      </list>
+	    </property>
+	</bean>
+	<bean id="sqlProperties" class="org.springframework.beans.factory.config.PropertiesFactoryBean">
+	    <property name="locations">
+	        <list>
+	        <value>classpath:sql.properties</value>
+	        </list>
+	    </property>
+	</bean> 
+	<bean id="databaseProperties" class="org.springframework.beans.factory.config.PropertiesFactoryBean">
+	    <property name="locations">
+	        <list>
+	        <value>classpath:database.properties</value>
+	        </list>
+	    </property>
+	</bean> 
+	
+	<bean id="emailer" class="com.axisbank.logistics.controller.Emailer">
+		<property name="mailSender" ref="mailSender" />
+	  </bean>
+	 
+	
+	<bean id="Schedules" class="com.axisbank.logistics.services.Schedules">
+	 <property name="jdbcTemplate" ref="jdbcTemplate"></property>
+	 <property name="sqlProperties" ref="sqlProperties"></property>
+	 <property name="emailer" ref="emailer"></property>
+	 <property name="databaseProperties" ref="databaseProperties"></property>
+	  <property name="userId"><value>${userId}</value></property> 
+	</bean>
+	
+	<bean id="timelyCronTriggerForEmailTrigger" class="org.springframework.scheduling.quartz.CronTriggerFactoryBean">
+		<property name="jobDetail" ref="timelyProcessForEmailTrigger" />
+		<property name="cronExpression" value="0 0/${emailSendingTriggerMinute} */${emailSendingTriggerHour} ? * MON-SAT *" />
+	</bean>
+
+	<bean id="timelyProcessForEmailTrigger" class="org.springframework.scheduling.quartz.MethodInvokingJobDetailFactoryBean">
+		<property name="targetObject" ref="Schedules" />
+		<property name="targetMethod" value="timelyProcessForEmailTrigger" />
+		 <property name="concurrent" value="false" />
+	</bean>
+
+	<bean id="dailyJob" class="org.springframework.scheduling.quartz.MethodInvokingJobDetailFactoryBean">
+	  <property name="targetObject" ref="Schedules" />
+	  <property name="targetMethod" value="dailyProcess" />
+	  <property name="concurrent" value="false" />
+	</bean>
+	
+	<bean id="emailJob" class="org.springframework.scheduling.quartz.MethodInvokingJobDetailFactoryBean">
+	  <property name="targetObject" ref="Schedules" />
+	  <property name="targetMethod" value="emailProcess" />
+	  <property name="concurrent" value="false" />
+	</bean>
+	
+	<bean id="morningJob" class="org.springframework.scheduling.quartz.MethodInvokingJobDetailFactoryBean">
+	  <property name="targetObject" ref="Schedules" />
+	  <property name="targetMethod" value="dailyMorningProcess" />
+	  <property name="concurrent" value="false" />
+	</bean>
+
+	<bean id="monthlyJob" class="org.springframework.scheduling.quartz.MethodInvokingJobDetailFactoryBean">
+	  <property name="targetObject" ref="Schedules" />
+	  <property name="targetMethod" value="monthlyMorningProcess" />
+	  <property name="concurrent" value="false" />
+	</bean>
+
+	<bean id="bodJob"
+		class="org.springframework.scheduling.quartz.MethodInvokingJobDetailFactoryBean">
+		<property name="targetObject" ref="Schedules" />
+		<property name="targetMethod" value="bodProcess" />
+		<property name="concurrent" value="false" />
+	</bean>
+
+
+	<bean id="dailyCronTrigger" class="org.springframework.scheduling.quartz.CronTriggerFactoryBean">
+	    <property name="jobDetail" ref="dailyJob" />  
+	    <!-- Fire at 08:30am every day -->
+	    <property name="cronExpression" value="0 55 15 * * ?" />
+	</bean>
+	
+	<bean id="emailCronTrigger" class="org.springframework.scheduling.quartz.CronTriggerFactoryBean">
+	    <property name="jobDetail" ref="emailJob" />  
+	    <!-- Fire at 08:30am every day -->
+	    <property name="cronExpression" value="0 40 15 * * ?" />
+	</bean>
+	
+	<bean id="morningCronTrigger" class="org.springframework.scheduling.quartz.CronTriggerFactoryBean">
+	    <property name="jobDetail" ref="morningJob" />  
+	    <property name="cronExpression" value="0 45 15 * * ?" />
+	</bean>
+
+	<bean id="monthlyCronTrigger" class="org.springframework.scheduling.quartz.CronTriggerFactoryBean">
+	    <property name="jobDetail" ref="monthlyJob" />  
+	    <property name="cronExpression" value="0 50 15 L * ?" />
+	</bean>
+
+	<bean id="bodCronTrigger"
+		class="org.springframework.scheduling.quartz.CronTriggerFactoryBean">
+		<property name="jobDetail" ref="bodJob" />
+		<property name="cronExpression" value="0 25 13 * * ?" />
+	</bean>
+
+	<bean id= "emialSchedulerFactoryBean" class="org.springframework.scheduling.quartz.SchedulerFactoryBean">
+		<property name="schedulerName" value="[emialSchedulerFactoryBean]"></property>
+		<property name="autoStartup"  value="${enableEmailSendingTrigger}"></property>
+		<property name="triggers" >
+			<list>
+				<ref bean="timelyCronTriggerForEmailTrigger" />
+			</list>
+		</property>
+	</bean>
+	
+
+<!-- Configure Schedule -->
+	<bean class="org.springframework.scheduling.quartz.SchedulerFactoryBean">
+	    <property name="triggers">
+	        <list>
+	        	<!-- -->
+	        	<ref bean="dailyCronTrigger" />
+	        	<ref bean="emailCronTrigger" />
+	        	<ref bean="morningCronTrigger" />
+	        	<ref bean="bodCronTrigger" />
+	        </list>
+	    </property>
+	</bean>
+	
+</beans>
